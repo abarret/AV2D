@@ -1,0 +1,413 @@
+// Bulk platelet concentrations are measured in 10 millions per cm^3
+// Bound platelet concentrations are measured in thousands per cm^2
+
+// physical parameters
+RHO = 1.0                                      // gm cm^-3, blood
+MU  = 0.035                                    // gm cm^-1 s^-1, blood
+
+// grid spacing parameters
+L = 7.68                                       // width of computational domain
+NUM_LEVELS = 1                                 // number of levels in locally refined grid
+REF_RATIO  = 2                                 // refinement ratio between levels
+NFINEST = 192                                  // number of Cartesian cells on finest   grid level
+N = NFINEST/(REF_RATIO^(NUM_LEVELS - 1))       // number of Cartesian cells on coarsest grid level
+DX_FINEST = L/NFINEST                          // Cartesian grid spacing on finest level (cm)
+DY = L/NFINEST
+leaflet_elem_order = "FIRST"                   // finite element order
+housing_elem_order = "FIRST"
+PK1_QUAD_ORDER = "FIFTH"
+PK1_QUAD_ORDER_HOUSING = "FIRST"
+
+// mesh parameters
+USE_HOUSING_BOUNDARY_MESH = FALSE
+USE_HOUSING_MASK = FALSE
+HOUSING_MESH_FILENAME = "2d_aorta_sideset.e"
+HOUSING_KERNEL_FCN = "PIECEWISE_LINEAR"
+
+LEAFLET_MESH_FILENAME = "2d_leaflets_sideset.e"
+LEAFLET_KERNEL_FCN = "BSPLINE_3"
+
+// Evolved Quantity Parameters
+BDRY_MESH_FILENAME = "bdry_mesh.e"
+//BDRY_MESH_FILENAME = "2d_boundary_redesign210407.e"
+USING_LS_FCN = TRUE
+MIN_REFINE_FACTOR = -4.0
+MAX_REFINE_FACTOR = 2.0
+LEAST_SQUARES_ORDER = "QUADRATIC"
+USE_STRANG_SPLITTING = TRUE
+USE_OUTSIDE_LS_FOR_TAGGING = TRUE
+ADV_INT_METHOD = "MIDPOINT_RULE"
+DIF_INT_METHOD = "TRAPEZOIDAL_RULE"
+USE_RBFS = TRUE
+RBF_STENCIL_SIZE = 5
+RBF_POLY_ORDER = "LINEAR"
+D_COEF = 1.0e-1
+SF_MAX = 1.0
+K_ON = 3.321e-2
+K_OFF = 1.0e-2
+USE_FEEDBACK = TRUE
+TIME_TO_START_RCNS = 0.0
+STIFF_RIGHT = FALSE
+VIZ_DUMP_TIME_INTERVAL = 0.006
+
+// solver parameters
+USE_IB_DELTA_FUNCTIONS     = TRUE                   // whether to use smoothed delta functions to mediate Lagrangian-Eulerian interaction
+BDRY_IB_DELTA_FUNCTION = "BSPLINE_3"
+SPLIT_FORCES                = FALSE             // whether to split interior and boundary forces
+USE_JUMP_CONDITIONS         = FALSE             // whether to impose pressure jumps at fluid-structure interfaces
+ELIMINATE_PRESSURE_JUMPS    = FALSE             // whether to eliminate pressure jumps at fluid-structure interfaces by modifying the PK1 stress
+USE_CONSISTENT_MASS_MATRIX  = FALSE             // whether to use a consistent or lumped mass matrix
+IB_USE_NODAL_QUADRATURE     = TRUE              // whether to use nodal or elemental quadrature
+IB_POINT_DENSITY            = 1.0               // approximate density of IB quadrature points for Lagrangian-Eulerian interaction
+CFL_MAX                     = 0.15              // maximum CFL number
+DT_MAX                      = 1.0e-5        // time step size (s)
+DT_MIN                      = 1.0e-8
+ERROR_ON_DT_CHANGE          = FALSE              // whether to emit an error message if the time step size changes
+START_TIME                  = 0.0e0             // initial simulation time (s)
+END_TIME                    = 0.8512            // final   simulation time (s)
+GROW_DT                     = 2.0e0             // growth factor for timesteps
+NUM_CYCLES                  = 1                 // number of cycles of fixed-point iteration
+CONVECTIVE_TS_TYPE          = "ADAMS_BASHFORTH" // convective time stepping type
+CONVECTIVE_OP_TYPE          = "STABILIZED_PPM"  // convective differencing discretization type
+CONVECTIVE_FORM             = "ADVECTIVE"       // how to compute the convective terms
+NORMALIZE_PRESSURE          = FALSE             // whether to explicitly force the pressure to have mean zero
+VORTICITY_TAGGING           = TRUE              // whether to tag cells for refinement based on vorticity thresholds
+TAG_BUFFER                  = 1                 // size of tag buffer used by grid generation algorithm
+REGRID_CFL_INTERVAL         = 0.5               // regrid whenever any material point could have moved 0.5 meshwidths since previous regrid
+OUTPUT_U                    = TRUE
+OUTPUT_P                    = TRUE
+OUTPUT_F                    = TRUE
+OUTPUT_OMEGA                = TRUE
+OUTPUT_DIV_U                = TRUE
+ENABLE_LOGGING              = TRUE
+
+C1_S = 0.5*1.843750*0.5*4375.0000*1.0e3
+C1_P  =  C1_S
+KAPPA_S_BODY = 0.5*1.843750*0.5*4375.0000*1.0e7
+KAPPA_P_BODY  =  KAPPA_S_BODY
+KAPPA_S_SURFACE = 0.5*1.843750*0.5*2828.1250000*1.0e6
+BETA_S = 0.5*32.500*0.5*7187.50000*1.0e3 //0.5*32.500*0.5*7187.50000*1.0e4
+BUTTRESS_KAPPA = KAPPA_P_BODY
+
+QInit {
+  num = 1.0
+  use_constant = TRUE
+}
+
+CouplingManager {
+  stencil_width = RBF_STENCIL_SIZE
+}
+
+VolBdryMeshMap {
+  max_level = NUM_LEVELS
+  subdomain_ids_on_levels {}
+}
+
+CutCellMapping {
+  perturb_nodes = FALSE
+}
+
+LSCutCellOperator {
+  robin_boundary = TRUE
+  cache_boundary = TRUE
+  use_rbfs = USE_RBFS
+  stencil_size = RBF_STENCIL_SIZE
+}
+
+PoissonSolver {
+}
+
+LSFromAV {
+    perturb_nodes = TRUE
+}
+
+Q_bcs {
+
+    acoef_function_0 = "0.0"
+    acoef_function_1 = "0.0"
+    acoef_function_2 = "1.0"
+    acoef_function_3 = "0.0"
+
+    bcoef_function_0 = "1.0"
+    bcoef_function_1 = "1.0"
+    bcoef_function_2 = "0.0"
+    bcoef_function_3 = "1.0"
+
+    gcoef_function_0 = "0.0"
+    gcoef_function_1 = "0.0"
+    gcoef_function_2 = "1.0"
+    gcoef_function_3 = "0.0"
+}
+
+HousingParams {
+   C1_S               = C1_S
+   C1_P               = C1_P
+   KAPPA_S_BODY       = KAPPA_S_BODY
+   KAPPA_P_BODY       = KAPPA_P_BODY
+}
+
+LeafletParams {
+   C10            = 1.5*5.0*3018.0*1.0e2
+   C10_min        = 1.5*5.0*3018.0*1.0e2
+   C10_max        = 1.5*5.0*3018.0*1.0e2*500
+   C01            = 3.2495
+   K1             = 1965103.0
+   K2             = 0.001
+   a_disp         = 0.0
+   BETA_S           =  BETA_S
+   KAPPA_S_SURFACE  =  KAPPA_S_SURFACE
+   KAPPA_P_BODY     = 1.0e8
+}
+
+BcCoefs {
+   R_LVOT = 0.0150      // LVOT resistance (mmHg ml^-1 s)
+   R_MV = 0.0050        // mitral valve resistance (mmHg ml^-1 s)
+   T_per = 0.8512       // period length (time) for cardiac cycle (s);
+   Q_vein = 6.2         // pulmonary veinous flow rate into LA (L/min);
+   t_sys = 0.03//0.2          // time to begin systole (s)
+   m1_LA = 1.32
+   m2_LA = 13.1
+   m1_LV = 2.4039
+   m2_LV = 20.9518
+   tau1_LA = 0.1150*T_per// sec
+   tau2_LA = 0.1882*T_per// sec
+   t_shift_LA = 0.85*T_per// time to shift pump in LA (s)
+   tau1_LV = 0.0887*T_per// sec
+   tau2_LV = 0.4461*T_per// sec
+   E_min_LA = 0.08      // elastance (mmHg ml^-1)
+   E_max_LA = 0.17      // elastance (mmHg ml^-1)
+   E_min_LV = 0.0265    // elastance (mmHg ml^-1)
+   E_max_LV = 0.16//0.15//0.3631    // elastance (mmHg ml^-1)
+   k_denom_LA = 0.558482
+   k_denom_LV = 0.9588
+   bdry_interface_level_number = NUM_LEVELS - 1
+   radius_lv = 1.9//33915795      // cm
+   radius_ao = 1.4//1697755      // cm
+   DATA_FILE_NAME = "bc_data.txt"
+   R_P = 0.9046         // peripheral resistance (mmHg ml^-1 s)
+   R_C = 0.0420         // characteristic resistance (mmHg ml^-1 s)
+   C = 1.9504           // total arterial compliance (ml mmHg^-1)
+   P_LA_init = 10.38    // mmHg
+   P_LV_init = 10.2892  // mmHg
+   P_Wk_init = 15.0//76.6591  // mmHg
+   t_ramp = 0.025//0.15        // sec
+   vol_conversion_fac = 1.0
+}
+
+CartesianGeometry {
+   domain_boxes = [ (0, 0) , (N - 1, N - 1) ]
+   x_lo         =  -L/2, -L/2       // lower end of computational domain.
+   x_up         =   L/2,  L/2       // upper end of computational domain.
+   periodic_dimension = 0 , 0
+}
+
+GriddingAlgorithm {
+   max_levels = NUM_LEVELS                     // Maximum number of levels in hierarchy.
+
+   ratio_to_coarser {
+      level_1 = REF_RATIO,REF_RATIO  // vector ratio to next coarser level
+      level_2 = REF_RATIO,REF_RATIO
+   }
+
+   largest_patch_size {
+      level_0 =1024,1024 // all finer levels will use same values as level_0...
+   }
+
+   smallest_patch_size {
+      level_0 =  8,  8 // all finer levels will use same values as level_0...
+   }
+
+   allow_patches_smaller_than_minimum_size_to_prevent_overlaps = TRUE
+   efficiency_tolerance   = 0.80e0    // min % of tag cells in new patch level
+   combine_efficiency     = 0.80e0    // chop box if sum of volumes of smaller
+                                      // boxes < efficiency * vol of large box
+}
+
+IBHierarchyIntegrator {
+   start_time          = START_TIME
+   end_time            = END_TIME
+   grow_dt             = GROW_DT
+   num_cycles          = NUM_CYCLES
+   regrid_cfl_interval = REGRID_CFL_INTERVAL
+   dt_max              = DT_MAX
+   dt_min              = DT_MIN
+   error_on_dt_change  = ERROR_ON_DT_CHANGE
+   enable_logging      = ENABLE_LOGGING
+}
+
+IBFEMethod {
+   split_forces                  = SPLIT_FORCES
+   use_jump_conditions           = USE_JUMP_CONDITIONS
+   use_consistent_mass_matrix    = USE_CONSISTENT_MASS_MATRIX
+   IB_use_consistent_mass_matrix = USE_CONSISTENT_MASS_MATRIX
+   IB_use_nodal_quadrature       = IB_USE_NODAL_QUADRATURE
+   IB_point_density              = IB_POINT_DENSITY
+   use_scratch_hierarchy         = TRUE
+   workload_quad_point_weight    = 1.0
+
+   GriddingAlgorithm {
+      max_levels = NUM_LEVELS                     // Maximum number of levels in hierarchy.
+
+      ratio_to_coarser {
+         level_1 = REF_RATIO,REF_RATIO            // vector ratio to next coarser level
+         level_2 = REF_RATIO,REF_RATIO
+      }
+
+      largest_patch_size {
+         level_0 =512,512 // all finer levels will use same values as level_0...
+      }
+
+      smallest_patch_size {
+         level_0 =  8,  8 // all finer levels will use same values as level_0...
+      }
+
+      allow_patches_smaller_than_minimum_size_to_prevent_overlaps = TRUE
+      efficiency_tolerance   = 0.80e0    // min % of tag cells in new patch level
+      combine_efficiency     = 0.80e0    // chop box if sum of volumes of smaller
+                                         // boxes < efficiency * vol of large box
+   }
+
+   LoadBalancer {
+      bin_pack_method     = "SPATIAL"
+      max_workload_factor = 1
+   }
+}
+
+INSStaggeredHierarchyIntegrator {
+   mu                            = MU
+   rho                           = RHO
+   start_time                    = START_TIME
+   end_time                      = END_TIME
+   grow_dt                       = GROW_DT
+   num_cycles                    = NUM_CYCLES
+   convective_time_stepping_type = CONVECTIVE_TS_TYPE
+   convective_op_type            = CONVECTIVE_OP_TYPE
+   convective_difference_form    = CONVECTIVE_FORM
+   normalize_pressure            = NORMALIZE_PRESSURE
+   cfl                           = CFL_MAX
+   dt_max                        = DT_MAX
+   dt_min                        = DT_MIN
+   using_vorticity_tagging       = VORTICITY_TAGGING
+   vorticity_rel_thresh          = 0.25
+   vorticity_abs_thresh          = 400.0
+   tag_buffer                    = TAG_BUFFER
+   output_U                      = OUTPUT_U
+   output_P                      = OUTPUT_P
+   output_F                      = OUTPUT_F
+   output_Omega                  = OUTPUT_OMEGA
+   output_Div_U                  = OUTPUT_DIV_U
+   enable_logging                = ENABLE_LOGGING
+
+   convective_op_db {
+      // settings for STABILIZED_PPM convective operator
+      width_0 = 4.0*DX_FINEST
+      width_1 = 4.0*DX_FINEST
+      width_2 = 4.0*DX_FINEST
+      width_3 = 4.0*DX_FINEST
+      width_4 = 4.0*DX_FINEST
+      width_5 = 4.0*DX_FINEST
+   }
+   stokes_solver_type = "PETSC_KRYLOV_SOLVER"
+   stokes_precond_type = "PROJECTION_PRECONDITIONER"
+   velocity_solver_type = "PETSC_KRYLOV_SOLVER"
+   pressure_solver_type = "PETSC_KRYLOV_SOLVER"
+   pressure_precond_type = "POINT_RELAXATION_FAC_PRECONDITIONER"
+   pressure_precond_db {
+      num_pre_sweeps  = 0
+      num_post_sweeps = 2
+      prolongation_method = "LINEAR_REFINE"
+      restriction_method  = "CONSERVATIVE_COARSEN"
+      coarse_solver_type  = "HYPRE_LEVEL_SOLVER"
+      coarse_solver_rel_residual_tol = 1.0e-12
+      coarse_solver_abs_residual_tol = 1.0e-50
+      coarse_solver_max_iterations = 1
+      coarse_solver_db {
+         solver_type          = "PFMG"
+         num_pre_relax_steps  = 1
+         num_post_relax_steps = 1
+         enable_logging       = FALSE
+      }
+   }
+}
+
+LoadBalancer {
+   bin_pack_method     = "SPATIAL"
+   max_workload_factor = 1
+}
+
+Main {
+// log file parameters
+   log_file_name    = "IB2d.log"
+   log_all_nodes    = FALSE
+
+// visualization dump parameters
+   viz_writer            = "VisIt", "ExodusII"
+   viz_dump_interval     = 200                      // zero to turn off
+   viz_dump_dirname      = "viz_IB2d"
+   visit_number_procs_per_file = 1
+
+// restart dump parameters
+   restart_interval      = 200                      // zero to turn off
+   restart_dirname       = "restart_IB2d"
+
+// timer dump parameters
+   timer_dump_interval   = 0                        // zero to turn off
+}
+
+StandardTagAndInitialize {
+   tagging_method = "GRADIENT_DETECTOR"
+}
+
+TimerManager {
+   print_exclusive = TRUE
+   print_total = TRUE
+   print_max = TRUE
+   print_threshold = 0.1
+
+   timer_list = "IBAMR::*::*","LS::*::*"
+}
+
+AdvDiffIntegrator {
+    start_time           = 0.0e0  // initial simulation time
+    end_time             = END_TIME    // final simulation time
+    grow_dt              = 2.0e0  // growth factor for timesteps
+    regrid_interval      = 1  // effectively disable regridding
+    cfl                  = CFL_MAX
+    dt_max               = DT_MAX
+    dt_min               = DT_MIN
+    enable_logging       = TRUE
+
+    prescribe_level_set  = USING_LS_FCN
+    min_ls_refine_factor = MIN_REFINE_FACTOR
+    max_ls_refine_factor = MAX_REFINE_FACTOR
+    least_squares_order = LEAST_SQUARES_ORDER
+    use_strang_splitting = USE_STRANG_SPLITTING
+    advection_ts_type = ADV_INT_METHOD
+    diffusion_ts_type = DIF_INT_METHOD
+    use_rbfs = USE_RBFS
+    rbf_stencil_size = RBF_STENCIL_SIZE
+    rbf_poly_order = RBF_POLY_ORDER
+
+    tag_buffer = TAG_BUFFER
+
+    convective_op_type                 = "PPM"//WAVE_PROP"
+    convective_difference_form         = "CONSERVATIVE"
+    convective_time_stepping_type      = "TRAPEZOIDAL_RULE"
+    init_convective_time_stepping_type = "MIDPOINT_RULE"
+    diffusion_time_stepping_type = "TRAPEZOIDAL_RULE"
+    num_cycles = 1
+}
+
+IBFESurfaceMethod {
+   use_IB_spread_operator     = USE_IB_DELTA_FUNCTIONS
+   use_IB_interp_operator     = USE_IB_DELTA_FUNCTIONS
+   IB_delta_fcn               = BDRY_IB_DELTA_FUNCTION
+   split_forces               = SPLIT_FORCES
+// split_tangential_force     = FALSE
+   use_jump_conditions        = USE_JUMP_CONDITIONS
+   use_consistent_mass_matrix = USE_CONSISTENT_MASS_MATRIX
+   IB_point_density           = IB_POINT_DENSITY
+//   constrain_tangential_motion = TRUE
+//   constrain_interior_faces = TRUE
+}
+
