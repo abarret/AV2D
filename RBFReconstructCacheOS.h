@@ -3,8 +3,8 @@
 
 /////////////////////////////// INCLUDES /////////////////////////////////////
 
-#include "CCAD/ReconstructCache.h"
-#include "CCAD/ls_functions.h"
+#include "ADS/ReconstructCache.h"
+#include "ADS/ls_functions.h"
 
 #include "ibtk/HierarchyGhostCellInterpolation.h"
 #include "ibtk/ibtk_utilities.h"
@@ -24,16 +24,18 @@
 
 /////////////////////////////// CLASS DEFINITION /////////////////////////////
 
+namespace LS
+{
 /*!
- * \brief Class RBFReconstructCacheOS caches the data necessary to form RBF
- * reconstructions of data.
+ * \brief Class RBFReconstructCacheOS caches the data necessary to form RBF reconstructions of data.
  *
  * Only uses data that is on one side of the tangent plane
  */
-class RBFReconstructCacheOS : public CCAD::ReconstructCache
+class RBFReconstructCacheOS : public ADS::ReconstructCache
 {
 public:
-    RBFReconstructCacheOS() = default;
+    RBFReconstructCacheOS() = delete;
+    RBFReconstructCacheOS(unsigned int stencil_width);
 
     RBFReconstructCacheOS(int ls_idx,
                           int vol_idx,
@@ -67,9 +69,10 @@ private:
                    const SAMRAI::pdat::CellData<NDIM, double>& Q_data,
                    SAMRAI::tbox::Pointer<SAMRAI::hier::Patch<NDIM>> patch);
 
-    std::vector<std::map<CCAD::IndexList, std::vector<SAMRAI::hier::Index<NDIM>>>> d_reconstruct_idxs_map_vec;
+    std::vector<std::map<ADS::IndexList, std::vector<SAMRAI::hier::Index<NDIM>>>> d_reconstruct_idxs_map_vec;
 
     // DEBUGGING
     double d_time = 0.0;
 };
+} // namespace LS
 #endif

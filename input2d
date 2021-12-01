@@ -2,6 +2,7 @@
 // Bound platelet concentrations are measured in thousands per cm^2
 
 // physical parameters
+PI = 3.1415926535
 RHO = 1.0                                      // gm cm^-3, blood
 MU  = 0.035                                    // gm cm^-1 s^-1, blood
 
@@ -9,7 +10,7 @@ MU  = 0.035                                    // gm cm^-1 s^-1, blood
 L = 7.68                                       // width of computational domain
 NUM_LEVELS = 1                                 // number of levels in locally refined grid
 REF_RATIO  = 2                                 // refinement ratio between levels
-NFINEST = 192                                  // number of Cartesian cells on finest   grid level
+NFINEST = 240                                  // number of Cartesian cells on finest   grid level
 N = NFINEST/(REF_RATIO^(NUM_LEVELS - 1))       // number of Cartesian cells on coarsest grid level
 DX_FINEST = L/NFINEST                          // Cartesian grid spacing on finest level (cm)
 DY = L/NFINEST
@@ -46,9 +47,12 @@ SF_MAX = 1.0
 K_ON = 3.321e-2
 K_OFF = 1.0e-2
 USE_FEEDBACK = TRUE
-TIME_TO_START_RCNS = 0.0
 STIFF_RIGHT = FALSE
+TIME_TO_START_RCNS = 2.0*0.8512
 VIZ_DUMP_TIME_INTERVAL = 0.006
+BDRY_ID_FOR_RCN = 2
+SF_INIT = 0.0
+DT_CONST = 0.0120352
 
 // solver parameters
 USE_IB_DELTA_FUNCTIONS     = TRUE                   // whether to use smoothed delta functions to mediate Lagrangian-Eulerian interaction
@@ -61,10 +65,10 @@ IB_USE_NODAL_QUADRATURE     = TRUE              // whether to use nodal or eleme
 IB_POINT_DENSITY            = 1.0               // approximate density of IB quadrature points for Lagrangian-Eulerian interaction
 CFL_MAX                     = 0.15              // maximum CFL number
 DT_MAX                      = 1.0e-5        // time step size (s)
-DT_MIN                      = 1.0e-8
+DT_MIN                      = 1.0e-9
 ERROR_ON_DT_CHANGE          = FALSE              // whether to emit an error message if the time step size changes
 START_TIME                  = 0.0e0             // initial simulation time (s)
-END_TIME                    = 0.8512            // final   simulation time (s)
+END_TIME                    = 12.0 * 0.8512            // final   simulation time (s)
 GROW_DT                     = 2.0e0             // growth factor for timesteps
 NUM_CYCLES                  = 1                 // number of cycles of fixed-point iteration
 CONVECTIVE_TS_TYPE          = "ADAMS_BASHFORTH" // convective time stepping type
@@ -87,7 +91,7 @@ KAPPA_S_BODY = 0.5*1.843750*0.5*4375.0000*1.0e7
 KAPPA_P_BODY  =  KAPPA_S_BODY
 KAPPA_S_SURFACE = 0.5*1.843750*0.5*2828.1250000*1.0e6
 BETA_S = 0.5*32.500*0.5*7187.50000*1.0e3 //0.5*32.500*0.5*7187.50000*1.0e4
-BUTTRESS_KAPPA = KAPPA_P_BODY
+BUTTRESS_KAPPA = 1.0e7
 
 QInit {
   num = 1.0
@@ -148,9 +152,9 @@ HousingParams {
 
 LeafletParams {
    C10            = 1.5*5.0*3018.0*1.0e2
-   C10_min        = 1.5*5.0*3018.0*1.0e2
-   C10_max        = 1.5*5.0*3018.0*1.0e2*500
    C01            = 3.2495
+   C10_min        = 1.5*5.0*3018.0*1.0e2
+   C10_max        = 1.5*5.0*3018.0*1.0e2*100.0
    K1             = 1965103.0
    K2             = 0.001
    a_disp         = 0.0
@@ -187,11 +191,11 @@ BcCoefs {
    R_P = 0.9046         // peripheral resistance (mmHg ml^-1 s)
    R_C = 0.0420         // characteristic resistance (mmHg ml^-1 s)
    C = 1.9504           // total arterial compliance (ml mmHg^-1)
-   P_LA_init = 10.38    // mmHg
-   P_LV_init = 10.2892  // mmHg
-   P_Wk_init = 15.0//76.6591  // mmHg
+   P_LA_init = 24.1882    // mmHg
+   P_LV_init = 20.4339  // mmHg
+   P_Wk_init = 76.4099  // mmHg
    t_ramp = 0.025//0.15        // sec
-   vol_conversion_fac = 1.0
+   vol_conversion_fac = PI * 1.9 * 0.5
 }
 
 CartesianGeometry {
@@ -342,12 +346,12 @@ Main {
 
 // visualization dump parameters
    viz_writer            = "VisIt", "ExodusII"
-   viz_dump_interval     = 200                      // zero to turn off
+   viz_dump_interval     = 8*600                      // zero to turn off
    viz_dump_dirname      = "viz_IB2d"
    visit_number_procs_per_file = 1
 
 // restart dump parameters
-   restart_interval      = 200                      // zero to turn off
+   restart_interval      = 8*600                      // zero to turn off
    restart_dirname       = "restart_IB2d"
 
 // timer dump parameters

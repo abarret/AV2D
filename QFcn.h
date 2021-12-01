@@ -11,24 +11,26 @@
 //
 // ---------------------------------------------------------------------
 
-#ifndef included_QFcn
-#define included_QFcn
+#ifndef included_LS_QFcn
+#define included_LS_QFcn
 
 /////////////////////////////// INCLUDES /////////////////////////////////////
 
 #include <ibtk/CartGridFunction.h>
 #include <ibtk/ibtk_utilities.h>
 
-#include <CCAD/LSCartGridFunction.h>
+#include <ADS/LSCartGridFunction.h>
 
 #include <CartesianGridGeometry.h>
 
+namespace LS
+{
 /////////////////////////////// CLASS DEFINITION /////////////////////////////
 
 /*!
  * \brief Method to initialize the value of the advected scalar Q.
  */
-class QFcn : public CCAD::LSCartGridFunction
+class QFcn : public ADS::LSCartGridFunction
 {
 public:
     /*!
@@ -92,5 +94,6 @@ private:
     double d_num = 1.0;
     bool d_constant = true;
 };
+} // namespace LS
 
-#endif //#ifndef included_QFcn
+#endif //#ifndef included_LS_QFcn

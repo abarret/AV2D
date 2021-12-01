@@ -2,14 +2,6 @@
 
 #include <ibamr/config.h>
 
-#include "CCAD/CutCellVolumeMeshMapping.h"
-#include "CCAD/LSCutCellLaplaceOperator.h"
-#include "CCAD/LSFromMesh.h"
-#include "CCAD/SBAdvDiffIntegrator.h"
-#include "CCAD/SBBoundaryConditions.h"
-#include "CCAD/SBIntegrator.h"
-#include "CCAD/VolumeBoundaryMeshMapping.h"
-
 #include <ibamr/IBExplicitHierarchyIntegrator.h>
 #include <ibamr/IBFECentroidPostProcessor.h>
 #include <ibamr/IBFEMethod.h>
@@ -25,13 +17,14 @@
 #include <ibtk/libmesh_utilities.h>
 #include <ibtk/muParserRobinBcCoefs.h>
 
-#include "CirculationModel.h"
-#include "FeedbackForcer.h"
-#include "QFcn.h"
-#include "RBFOneSidedReconstructions.h"
-#include "RBFReconstructCacheOS.h"
-#include "VelocityBcCoefs.h"
-#include <CCAD/app_namespaces.h>
+#include <ADS/CutCellVolumeMeshMapping.h>
+#include <ADS/LSCutCellLaplaceOperator.h>
+#include <ADS/LSFromMesh.h>
+#include <ADS/SBAdvDiffIntegrator.h>
+#include <ADS/SBBoundaryConditions.h>
+#include <ADS/SBIntegrator.h>
+#include <ADS/VolumeBoundaryMeshMapping.h>
+#include <ADS/app_namespaces.h>
 
 #include <libmesh/analytic_function.h>
 #include <libmesh/boundary_info.h>
@@ -61,14 +54,16 @@
 #include <SAMRAI_config.h>
 #include <StandardTagAndInitialize.h>
 
-void
-integrateHierarchy(const double current_time, const double new_time, const int cycle_num, void* ctx)
-{
-    plog << "Integrating adv diff integrator at cycle " << cycle_num << "\n";
-    if (cycle_num != 0) return;
-    auto adv_diff_int = static_cast<AdvDiffSemiImplicitHierarchyIntegrator*>(ctx);
-    adv_diff_int->integrateHierarchy(current_time, new_time, 500);
-}
+// Local includes
+#include "CBFinder.h"
+#include "CirculationModel.h"
+#include "FeedbackForcer.h"
+#include "QFcn.h"
+#include "RBFOneSidedReconstructions.h"
+#include "RBFReconstructCacheOS.h"
+#include "VelocityBcCoefs.h"
+
+using namespace LS;
 
 static double dy = std::numeric_limits<double>::quiet_NaN();
 void
@@ -80,123 +75,6 @@ bdry_fcn(const IBTK::VectorNd& x, double& ls_val)
         ls_val = std::max((-1.4166 - x[0]), (x[0] - 1.4174));
 }
 
-static double max_CB = 0.0;
-static double min_CB = 0.0;
-static double avg_CB = 0.0;
-static unsigned int tot_CB = 0;
-
-class CBFinder
-{
-public:
-    CBFinder(std::string sf_name,
-             MeshBase* vol_mesh,
-             std::shared_ptr<SBSurfaceFluidCouplingManager> sb_data_manager,
-             FEDataManager* fe_data_manager)
-        : d_sf_name(std::move(sf_name)), d_sb_data_manager(std::move(sb_data_manager))
-    {
-        BoundaryMesh* bdry_mesh = sb_data_manager->getMesh();
-        std::map<dof_id_type, unsigned char> side_id_map;
-        vol_mesh->boundary_info->get_side_and_node_maps(*bdry_mesh, d_node_id_map, side_id_map);
-        EquationSystems* eq_sys = fe_data_manager->getEquationSystems();
-        const System& X_sys = eq_sys->get_system(fe_data_manager->COORDINATES_SYSTEM_NAME);
-        d_elem_type = X_sys.get_dof_map().variable_type(0);
-        return;
-    }
-
-    CBFinder()
-    {
-    }
-
-    void setFEType(FEDataManager* fe_data_manager)
-    {
-        EquationSystems* eq_sys = fe_data_manager->getEquationSystems();
-        const System& X_sys = eq_sys->get_system(fe_data_manager->COORDINATES_SYSTEM_NAME);
-        d_elem_type = X_sys.get_dof_map().variable_type(0);
-    }
-
-    void registerSFName(std::string sf_name)
-    {
-        d_sf_name = std::move(sf_name);
-    }
-
-    void registerSBData(MeshBase* vol_mesh, std::shared_ptr<SBSurfaceFluidCouplingManager> sb_data_manager)
-    {
-        d_sb_data_manager = std::move(sb_data_manager);
-        std::map<dof_id_type, unsigned char> side_id_map;
-        vol_mesh->boundary_info->get_side_and_node_maps(*d_sb_data_manager->getMesh(), d_node_id_map, side_id_map);
-    }
-
-    double findCB(const TensorValue<double>& FF,
-                  const libMesh::Point& X, // current location
-                  const libMesh::Point& s, // reference location
-                  Elem* const elem,
-                  double time)
-    {
-        EquationSystems* eq_sys = d_sb_data_manager->getFEMeshPartitioner()->getEquationSystems();
-        System& sf_sys = eq_sys->get_system(d_sf_name);
-        const DofMap& sf_dof_map = sf_sys.get_dof_map();
-        System& J_sys = eq_sys->get_system(d_sb_data_manager->getJacobianName());
-        const DofMap& J_dof_map = J_sys.get_dof_map();
-
-        NumericVector<double>* J_vec = J_sys.current_local_solution.get();
-        NumericVector<double>* sf_vec = sf_sys.solution.get();
-
-        std::unique_ptr<FEBase> fe = FEBase::build(NDIM, FEType());
-        const std::vector<std::vector<double>>& phi = fe->get_phi();
-
-        const libMesh::Point mapped_pt(FEInterface::inverse_map(NDIM, d_elem_type, elem, s));
-        std::vector<libMesh::Point> pts = { mapped_pt };
-        fe->reinit(elem, &pts);
-        double J = 0.0;
-        double sf = 0.0;
-        for (unsigned int n_num = 0; n_num < elem->n_nodes(); ++n_num)
-        {
-            auto node_id_iter = d_node_id_map.find(elem->node_id(n_num));
-            if (node_id_iter != d_node_id_map.end())
-            {
-                const std::pair<dof_id_type, dof_id_type>& vol_bdry_id_pair = *node_id_iter;
-                sf += (*sf_vec)(vol_bdry_id_pair.second) * phi[n_num][0];
-                J += (*J_vec)(vol_bdry_id_pair.second) * phi[n_num][0];
-            }
-        }
-        max_CB = std::max(max_CB, std::abs(sf * J));
-        min_CB = std::min(min_CB, std::abs(sf * J));
-        avg_CB += std::abs(sf * J);
-        tot_CB += 1;
-        return sf * J;
-    }
-
-    double maxCB() const
-    {
-        double maxCB = 0.0;
-        EquationSystems* eq_sys = d_sb_data_manager->getFEMeshPartitioner()->getEquationSystems();
-        System& sf_sys = eq_sys->get_system(d_sf_name);
-        const DofMap& sf_dof_map = sf_sys.get_dof_map();
-        System& J_sys = eq_sys->get_system(d_sb_data_manager->getJacobianName());
-        const DofMap& J_dof_map = J_sys.get_dof_map();
-
-        NumericVector<double>* J_vec = J_sys.current_local_solution.get();
-        NumericVector<double>* sf_vec = sf_sys.current_local_solution.get();
-
-        const MeshBase& mesh = eq_sys->get_mesh();
-        auto node_it = mesh.local_nodes_begin();
-        const auto& node_end = mesh.local_nodes_end();
-        for (; node_it != node_end; ++node_it)
-        {
-            const Node* const node = *node_it;
-            double CB = (*J_vec)(node->id()) * (*sf_vec)(node->id());
-            maxCB = std::max(maxCB, std::abs(CB));
-        }
-        return maxCB;
-    }
-
-private:
-    std::string d_sf_name;
-    std::shared_ptr<SBSurfaceFluidCouplingManager> d_sb_data_manager;
-    std::map<dof_id_type, dof_id_type> d_node_id_map;
-    libMesh::FEType d_elem_type;
-};
-
 static double k_on = 1.0;
 static double k_off = 1.0;
 static double sf_max = 1.0;
@@ -204,6 +82,7 @@ static double fl_scale = 1.0;
 static double sf_scale = 1.0;
 static double time_to_start = 0.0;
 static double D_coef = 0.0;
+static double sf_init_val = 0.0;
 
 double
 sf_ode(const double sf_val,
@@ -226,7 +105,7 @@ sf_ode(const double sf_val,
 double
 sf_init(const VectorNd& /*X*/, const Node* const /*node*/)
 {
-    return 0.0;
+    return sf_init_val;
 }
 
 double
@@ -316,9 +195,8 @@ dI4f_dFF(const TensorValue<double>& FF, const VectorValue<double>& f0)
 inline TensorValue<double>
 dI4f_bar_dFF(const TensorValue<double>& FF, const VectorValue<double>& f0)
 {
-    // I4f_bar = f0 * CC_bar * f0 = f0 * FF_bar^T FF_bar * f0 = (FF_bar f0) *
-    // (FF_bar f0) FF_bar = J^(-1/3) FF ===> det(FF_bar) = 1, I4f_bar = J^(-2/3)
-    // I4f
+    // I4f_bar = f0 * CC_bar * f0 = f0 * FF_bar^T FF_bar * f0 = (FF_bar f0) * (FF_bar f0)
+    // FF_bar = J^(-1/3) FF ===> det(FF_bar) = 1, I4f_bar = J^(-2/3) I4f
     const double J = FF.det();
     const VectorValue<double> f = FF * f0;
     const double I4f = f * f;
@@ -428,12 +306,17 @@ leaflet_stress_fcn(TensorValue<double>& PP,
                    double time,
                    void* ctx)
 {
-    auto params = static_cast<std::pair<LeafletStressParams*, CBFinder*>*>(ctx)->first;
-    auto cb_finder = static_cast<std::pair<LeafletStressParams*, CBFinder*>*>(ctx)->second;
+    auto params = static_cast<std::pair<LeafletStressParams*, std::shared_ptr<CBFinder>*>*>(ctx)->first;
+    auto cb_finder = *(static_cast<std::pair<LeafletStressParams*, std::shared_ptr<CBFinder>*>*>(ctx)->second);
     const vector<double>& v1_vec = *var_data[0];
     const vector<double>& v2_vec = *var_data[1];
+#if (NDIM == 2)
+    const VectorValue<double> v1(v1_vec[0], v1_vec[1], 0.0);
+    const VectorValue<double> v2(v2_vec[0], v2_vec[1], 0.0);
+#else
     const VectorValue<double> v1(v1_vec[0], v1_vec[1], v1_vec[2]);
     const VectorValue<double> v2(v2_vec[0], v2_vec[1], v2_vec[2]);
+#endif
 
     double C10_min = params->C10_min;
     double C10_max = params->C10_max;
@@ -509,9 +392,8 @@ leaflet_penalty_stress_fcn(TensorValue<double>& PP,
     LeafletStressParams* params = static_cast<LeafletStressParams*>(ctx);
     const double beta_s = params->beta_s;
     const TensorValue<double> FF_inv_trans = tensor_inverse_transpose(FF, NDIM);
-    // PP = (beta_s == 0.0 ? 0.0 : beta_s * log(pow(FF.det(), 2.0))) *
-    // FF_inv_trans; PP = (beta_s == 0.0 ? 0.0 : beta_s * 0.5 * FF.det()) *
-    // FF_inv_trans; //Nandini model
+    // PP = (beta_s == 0.0 ? 0.0 : beta_s * log(pow(FF.det(), 2.0))) * FF_inv_trans;
+    // PP = (beta_s == 0.0 ? 0.0 : beta_s * 0.5 * FF.det()) * FF_inv_trans; //Nandini model
     double J = FF.det();
     PP = beta_s * J * log(J) * FF_inv_trans;
     return;
@@ -668,20 +550,18 @@ buttress_force(VectorValue<double>& F,
     return;
 }
 
+static double dt_const = 0.0;
+
 double
-find_dt(const CBFinder& cb_finder, const LeafletStressParams& leaflet_params)
+find_dt(const std::shared_ptr<CBFinder>& cb_finder, const LeafletStressParams& leaflet_params)
 {
     const double C10_min = leaflet_params.C10_min;
     const double C10_max = leaflet_params.C10_max;
-    const double cb = cb_finder.maxCB();
-    const double c10 = findStiffness(C10_min, C10_max, max_CB, sf_max);
-    plog << "  maxCB       : " << cb << "\n";
-    plog << "  max CB used : " << max_CB << "\n";
-    plog << "  min CB used : " << min_CB << "\n";
-    plog << "  avg CB used : " << avg_CB / static_cast<double>(tot_CB) << "\n";
+    const double cb = cb_finder->maxCB();
+    const double c10 = findStiffness(C10_min, C10_max, cb, sf_max);
     plog << "  c10         : " << c10 << "\n";
-    plog << "  dt          : " << 0.015044 / std::sqrt(c10) << "\n";
-    return 0.015044 / std::sqrt(c10);
+    plog << "  dt          : " << dt_const / std::sqrt(c10) << "\n";
+    return dt_const / std::sqrt(c10);
 }
 } // namespace
 
@@ -878,8 +758,10 @@ main(int argc, char* argv[])
         v2_sys_data[0] = SystemData("v2_0", vars);
         bool from_restart = RestartManager::getManager()->isFromRestart();
 
-        CBFinder cb_finder;
-        std::pair<LeafletStressParams*, CBFinder*> param_cb_finder_pair(&leaflet_stress_params, &cb_finder);
+        dt_const = input_db->getDouble("DT_CONST");
+        auto cb_finder = std::make_shared<CBFinder>();
+        std::pair<LeafletStressParams*, std::shared_ptr<CBFinder>*> param_cb_finder_pair(&leaflet_stress_params,
+                                                                                         &cb_finder);
 
         for (unsigned int part = 0; part < NUM_PARTS; ++part)
         {
@@ -1049,20 +931,19 @@ main(int argc, char* argv[])
 
         pout << "Setting up level set\n";
         Pointer<NodeVariable<NDIM, double>> ls_var = new NodeVariable<NDIM, double>("LS");
+        auto bdry_id_for_rcn = static_cast<boundary_id_type>(input_db->getInteger("BDRY_ID_FOR_RCN"));
         adv_diff_integrator->registerLevelSetVariable(ls_var);
-        std::vector<std::set<boundary_id_type>> bdry_id_vec = { { 1, 2, 3 }, { 1 }, { 5 } };
+        std::vector<std::set<boundary_id_type>> bdry_id_vec = { { 1, 2, 3 }, { 3 }, { bdry_id_for_rcn } };
         std::vector<FEDataManager*> fe_data_managers = { ibfe_method_ops->getFEDataManager(LEAFLET_PART),
                                                          ibfe_method_ops->getFEDataManager(HOUSING_PART) };
         std::vector<unsigned int> parts = { 0, 1, 0 };
         auto vol_bdry_mesh_mapping =
             std::make_shared<VolumeBoundaryMeshMapping>("VolBdryMeshMap",
                                                         app_initializer->getComponentDatabase("VolBdryMeshMap"),
-                                                        patch_hierarchy,
                                                         vol_meshes,
                                                         fe_data_managers,
                                                         bdry_id_vec,
                                                         parts,
-                                                        /*register_for_restart*/ true,
                                                         app_initializer->getRestartReadDirectory(),
                                                         app_initializer->getRestartRestoreNumber());
         Pointer<CutCellVolumeMeshMapping> cut_cell_mapping =
@@ -1078,11 +959,10 @@ main(int argc, char* argv[])
         ls_fcn->registerNormalReverseDomainId({ 5, 6, 9, 12, 11 });
         ls_fcn->registerNormalReverseElemId({ 632, 633, 634 });
         adv_diff_integrator->registerLevelSetVolFunction(ls_var, ls_fcn);
-        adv_diff_integrator->registerVolumeBoundaryMeshMapping(vol_bdry_mesh_mapping);
+        adv_diff_integrator->registerGeneralBoundaryMeshMapping(vol_bdry_mesh_mapping);
 
-        Pointer<RBFReconstructCacheOS> reconstruct_cache = new RBFReconstructCacheOS();
+        Pointer<RBFReconstructCacheOS> reconstruct_cache = new RBFReconstructCacheOS(1);
         adv_diff_integrator->registerReconstructionCache(reconstruct_cache);
-        reconstruct_cache->setStencilWidth(1);
 
         EquationSystems* leaflet_bdry_eq = cut_cell_mapping->getMeshPartitioner(LEAFLET_PART)->getEquationSystems();
         EquationSystems* housing_bdry_eq = cut_cell_mapping->getMeshPartitioner(HOUSING_PART)->getEquationSystems();
@@ -1106,14 +986,11 @@ main(int argc, char* argv[])
         auto convective_reconstruct =
             std::make_shared<RBFOneSidedReconstructions>("OneSided", Reconstruct::RBFPolyOrder::QUADRATIC, 7);
         adv_diff_integrator->registerAdvectionReconstruction(Q_var, convective_reconstruct);
-        time_integrator->registerIntegrateHierarchyCallback(integrateHierarchy,
-                                                            static_cast<void*>(adv_diff_integrator.getPointer()));
 
         // Setup reactions
         auto sb_coupling_manager =
             std::make_shared<SBSurfaceFluidCouplingManager>("CouplingManager",
                                                             app_initializer->getComponentDatabase("CouplingManager"),
-                                                            static_cast<BoundaryMesh*>(&reaction_bdry_eq->get_mesh()),
                                                             vol_bdry_mesh_mapping->getMeshPartitioner(2));
         sb_coupling_manager->registerReconstructCache(reconstruct_cache);
         sb_coupling_manager->registerFluidConcentration(Q_var);
@@ -1122,6 +999,7 @@ main(int argc, char* argv[])
         sb_coupling_manager->registerSurfaceReactionFunction(sf_name, sf_ode);
         sb_coupling_manager->registerFluidBoundaryCondition(Q_var, a_fcn, g_fcn);
         sb_coupling_manager->registerFluidSurfaceDependence(sf_name, Q_var);
+        sf_init_val = input_db->getDouble("SF_INIT");
         sb_coupling_manager->registerInitialConditions(sf_name, sf_init);
         sb_coupling_manager->initializeFEData();
         Pointer<SBIntegrator> sb_integrator = new SBIntegrator("SBIntegrator", sb_coupling_manager);
@@ -1138,9 +1016,6 @@ main(int argc, char* argv[])
         use_feedback = input_db->getBool("USE_FEEDBACK");
         stiff_right = input_db->getBool("STIFF_RIGHT");
         time_to_start = input_db->getDouble("TIME_TO_START_RCNS");
-
-        cb_finder.registerSFName(sf_name);
-        cb_finder.registerSBData(vol_meshes[LEAFLET_PART], sb_coupling_manager);
 
         // Set up diffusion operators
         Pointer<LSCutCellLaplaceOperator> rhs_oper = new LSCutCellLaplaceOperator(
@@ -1193,7 +1068,9 @@ main(int argc, char* argv[])
         vol_bdry_mesh_mapping->initializeEquationSystems();
         if (!from_restart) sb_coupling_manager->fillInitialConditions();
 
-        cb_finder.setFEType(ibfe_method_ops->getFEDataManager(LEAFLET_PART));
+        // Setup CBFinder. Note that this must be done here so that the FEDataManager is already set up.
+        cb_finder = std::make_shared<CBFinder>(
+            sf_name, vol_meshes[LEAFLET_PART], sb_coupling_manager, ibfe_method_ops->getFEDataManager(LEAFLET_PART));
 
         // Initialize hierarchy configuration and data on all patches.
         time_integrator->initializePatchHierarchy(patch_hierarchy, gridding_algorithm);
@@ -1309,11 +1186,8 @@ main(int argc, char* argv[])
             pout << "At beginning of timestep # " << iteration_num << endl;
             pout << "Simulation time is " << loop_time << endl;
 
-            const double dt = find_dt(cb_finder, leaflet_stress_params);
-            max_CB = 0.0;
-            min_CB = std::numeric_limits<double>::max();
-            avg_CB = 0.0;
-            tot_CB = 0;
+            double dt = find_dt(cb_finder, leaflet_stress_params);
+            dt = std::min(time_integrator->getMaximumTimeStepSize(), dt);
 
             Pointer<hier::Variable<NDIM>> U_var = navier_stokes_integrator->getVelocityVariable();
             Pointer<hier::Variable<NDIM>> P_var = navier_stokes_integrator->getPressureVariable();
@@ -1338,11 +1212,10 @@ main(int argc, char* argv[])
             I1_min_leaflets = std::numeric_limits<double>::max();
             pout << "I1_max_leaflets is " << SAMRAI_MPI::maxReduction(I1_max_leaflets) << endl;
             I1_max_leaflets = std::numeric_limits<double>::min();
-            // pout << "I4_min_leaflets is " <<
-            // SAMRAI_MPI::minReduction(I4_min_leaflets) << endl; I4_min_leaflets =
-            // std::numeric_limits<double>::max(); pout << "I4_max_leaflets is " <<
-            // SAMRAI_MPI::maxReduction(I4_max_leaflets) << endl; I4_max_leaflets =
-            // std::numeric_limits<double>::min();
+            // pout << "I4_min_leaflets is " << SAMRAI_MPI::minReduction(I4_min_leaflets) << endl;
+            // I4_min_leaflets = std::numeric_limits<double>::max();
+            // pout << "I4_max_leaflets is " << SAMRAI_MPI::maxReduction(I4_max_leaflets) << endl;
+            // I4_max_leaflets = std::numeric_limits<double>::min();
 
             loop_time += dt;
 
@@ -1368,9 +1241,11 @@ main(int argc, char* argv[])
                 TimerManager::getManager()->print(plog);
             }
         }
-
+        pout << "Deleting bc coefs\n";
         for (int d = 0; d < NDIM; ++d) delete u_bc_coefs[d];
+        pout << "Done deleting bc coefs\n";
     }
+    pout << "Finished cleaning up\n";
 
     return 0;
 } // main

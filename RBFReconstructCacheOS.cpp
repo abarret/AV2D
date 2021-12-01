@@ -1,7 +1,14 @@
-#include "CCAD/app_namespaces.h"
-#include "CCAD/reconstructions.h"
+#include "ADS/app_namespaces.h"
+#include "ADS/reconstructions.h"
 
 #include "RBFReconstructCacheOS.h"
+
+namespace LS
+{
+RBFReconstructCacheOS::RBFReconstructCacheOS(const unsigned int stencil_width) : ReconstructCache(stencil_width)
+{
+    // intentionally blank
+}
 
 RBFReconstructCacheOS::RBFReconstructCacheOS(int ls_idx,
                                              int vol_idx,
@@ -66,7 +73,7 @@ RBFReconstructCacheOS::reconstructOnIndex(VectorNd x_loc,
         VectorNd x_cent_c;
         if (d_use_centroids)
         {
-            x_cent_c = find_cell_centroid(idx_c, *ls_data);
+            x_cent_c = ADS::find_cell_centroid(idx_c, *ls_data);
         }
         else
         {
@@ -142,22 +149,22 @@ RBFReconstructCacheOS::cacheData(VectorNd x_loc,
             if (ls_ll * ls_lr < 0.0)
             {
                 intersect_pts.push_back(
-                    CCAD::midpoint_value(VectorNd(idx(0), idx(1)), ls_ll, VectorNd(idx(0) + 1.0, idx(1)), ls_lr));
+                    ADS::midpoint_value(VectorNd(idx(0), idx(1)), ls_ll, VectorNd(idx(0) + 1.0, idx(1)), ls_lr));
             }
             if (ls_lr * ls_ur < 0.0)
             {
-                intersect_pts.push_back(CCAD::midpoint_value(
+                intersect_pts.push_back(ADS::midpoint_value(
                     VectorNd(idx(0) + 1.0, idx(1)), ls_lr, VectorNd(idx(0) + 1.0, idx(1) + 1.0), ls_ur));
             }
             if (ls_ur * ls_ul < 0.0)
             {
-                intersect_pts.push_back(CCAD::midpoint_value(
+                intersect_pts.push_back(ADS::midpoint_value(
                     VectorNd(idx(0) + 1.0, idx(1) + 1.0), ls_ur, VectorNd(idx(0), idx(1) + 1.0), ls_ul));
             }
             if (ls_ul * ls_ll < 0.0)
             {
                 intersect_pts.push_back(
-                    CCAD::midpoint_value(VectorNd(idx(0), idx(1) + 1.0), ls_ul, VectorNd(idx(0), idx(1)), ls_ll));
+                    ADS::midpoint_value(VectorNd(idx(0), idx(1) + 1.0), ls_ul, VectorNd(idx(0), idx(1)), ls_ll));
             }
             IBTK::Vector3d tangent_vec(
                 intersect_pts[0](0) - intersect_pts[1](0), intersect_pts[0](1) - intersect_pts[1](1), 0.0);
@@ -165,10 +172,9 @@ RBFReconstructCacheOS::cacheData(VectorNd x_loc,
             VectorNd normal_vec_2d(normal_vec(0), normal_vec(1));
             // We know that the current idx is on the "interior" of the structure.
             // Use this to determine the sign
-            VectorNd cur_vec = CCAD::find_cell_centroid(idx, *ls_data) - 0.5 * (intersect_pts[0] + intersect_pts[1]);
+            VectorNd cur_vec = ADS::find_cell_centroid(idx, *ls_data) - 0.5 * (intersect_pts[0] + intersect_pts[1]);
             double sgn = normal_vec_2d.dot(cur_vec);
-            // Now we need to check against this sign to determine if we can use the
-            // point.
+            // Now we need to check against this sign to determine if we can use the point.
 
             const CellIndex<NDIM>& idx_low = patch->getBox().lower();
             std::vector<VectorNd> X_vals;
@@ -182,14 +188,14 @@ RBFReconstructCacheOS::cacheData(VectorNd x_loc,
                     VectorNd x_cent_c;
                     if (d_use_centroids)
                     {
-                        x_cent_c = find_cell_centroid(idx_c, *ls_data);
+                        x_cent_c = ADS::find_cell_centroid(idx_c, *ls_data);
                     }
                     else
                     {
                         for (int d = 0; d < NDIM; ++d) x_cent_c[d] = static_cast<double>(idx_c[d]) + 0.5;
                     }
                     VectorNd dist_to_plane =
-                        CCAD::find_cell_centroid(idx_c, *ls_data) - 0.5 * (intersect_pts[0] + intersect_pts[1]);
+                        ADS::find_cell_centroid(idx_c, *ls_data) - 0.5 * (intersect_pts[0] + intersect_pts[1]);
 
                     // Check to see if it's the same sign as sgn
                     if ((normal_vec_2d.dot(dist_to_plane) * sgn) > 0.0)
@@ -230,11 +236,9 @@ RBFReconstructCacheOS::cacheData(VectorNd x_loc,
         }
         else
         {
-            // We must be on a full cell (or something has gone terribly wrong and we
-            // are on an empty cell) We can be on a full cell if the reconstruction
-            // point has two intersections on the same side of the cell. We'll use
-            // flooding to do the reconstruction since finding "normals" doesn't make
-            // sense here
+            // We must be on a full cell (or something has gone terribly wrong and we are on an empty cell)
+            // We can be on a full cell if the reconstruction point has two intersections on the same side of the cell.
+            // We'll use flooding to do the reconstruction since finding "normals" doesn't make sense here
             std::vector<CellIndex<NDIM>> new_idxs = { idx };
             std::vector<VectorNd> X_vals;
             unsigned int i = 0;
@@ -250,7 +254,7 @@ RBFReconstructCacheOS::cacheData(VectorNd x_loc,
                     idx_map[p_idx].push_back(new_idx);
                     VectorNd x_cent;
                     if (d_use_centroids)
-                        x_cent = find_cell_centroid(new_idx, *ls_data);
+                        x_cent = ADS::find_cell_centroid(new_idx, *ls_data);
                     else
                         for (int d = 0; d < NDIM; ++d) x_cent[d] = static_cast<double>(new_idx(d)) + 0.5;
                     X_vals.push_back(x_cent);
@@ -300,3 +304,4 @@ RBFReconstructCacheOS::cacheData(VectorNd x_loc,
         }
     }
 }
+} // namespace LS

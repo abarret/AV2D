@@ -13,9 +13,10 @@
 
 #include <ibamr/config.h>
 
-#include "CCAD/IntegrateFunction.h"
-#include "CCAD/app_namespaces.h"
-#include "CCAD/ls_functions.h"
+#include "ADS/IntegrateFunction.h"
+#include "ADS/ls_functions.h"
+
+#include "ibamr/app_namespaces.h"
 
 #include "QFcn.h"
 
@@ -23,6 +24,8 @@
 
 #include <array>
 
+namespace LS
+{
 /////////////////////////////// PUBLIC ///////////////////////////////////////
 
 QFcn::QFcn(const string& object_name, Pointer<Database> input_db) : LSCartGridFunction(object_name)
@@ -75,3 +78,4 @@ QFcn::setDataOnPatch(const int data_idx,
 
     return;
 } // setDataOnPatch
+} // namespace LS

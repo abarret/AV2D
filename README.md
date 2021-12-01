@@ -2,6 +2,6 @@ This is a two dimensional model of flow through the aortic valve. A concentratio
 
 Requires a build of CutCellAdvDiff, which requires a CMake build of IBAMR. This example can be configured using
 
-cmake -DCMAKE_C_FLAGS="-O3 -march=native" -DCMAKE_CXX_FLAGS="-O3 -march=native" -DCMAKE_Fortran_FLAGS="-O3 -march=native" -DIBAMR_ROOT=/path/to/ibamr/build -DCCAD_ROOT=/path/to/ccad/build ../AV2D
+cmake -DCMAKE_C_FLAGS="-O3 -march=native" -DCMAKE_CXX_FLAGS="-O3 -march=native" -DCMAKE_Fortran_FLAGS="-O3 -march=native" -DIBAMR_ROOT=/path/to/ibamr/build -DADS_ROOT=/path/to/ccad/build ../AV2D
 
 Sometimes compilers must be given to cmake.

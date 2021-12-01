@@ -59,20 +59,18 @@ static double k_denom_LV = 0.9588;
 static double k_LA = (E_max_LA - E_min_LA) / k_denom_LA;
 static double k_LV = (E_max_LV - E_min_LV) / k_denom_LV;
 
-// Three-element windkessel model fit to Larry Scotten's experimental data for
-// porcine BHV:
+// Three-element windkessel model fit to Larry Scotten's experimental data for porcine BHV:
 static double R_P = 0.9046; // peripheral resistance (mmHg ml^-1 s)
 static double R_C = 0.0420; // characteristic resistance (mmHg ml^-1 s)
 static double C = 1.9504;   // total arterial compliance (ml mmHg^-1)
 
 // Time required to "ramp up" the pressure in the LA/LV and Windkessel models.
 //
-// The values of P_LV_init and P_Wk_init are essentially the initial conditions
-// for the upstream/downstream flow circuits, for which the pressure is a state
-// variable.
+// The values of P_LV_init and P_Wk_init are essentially the initial conditions for the
+// upstream/downstream flow circuits, for which the pressure is a state variable.
 //
-// We *actually* start from zero pressure, however, to allow the leaflets the
-// opportunity to gradually "load up".
+// We *actually* start from zero pressure, however, to allow the leaflets the opportunity
+// to gradually "load up".
 static double P_LA_init = 10.38;   // mmHg
 static double P_LV_init = 10.2892; // mmHg
 static double P_Wk_init = 76.6591; // mmHg
@@ -188,8 +186,7 @@ CirculationModel::CirculationModel(const string& object_name, Pointer<Database> 
         T_per = input_db->getDoubleWithDefault("T_per", T_per);    // period length (time) for cardiac cycle (s);
         Q_vein = input_db->getDoubleWithDefault("Q_vein", Q_vein); // pulmonary veinous flow rate into LA (L/min);
         Q_vein_conv = Q_vein * flconv;                             // pulmonary veinous flow rate into LA (ml/sec);
-        t_sys = input_db->getDoubleWithDefault("t_sys",
-                                               t_sys); // time to begin systole (s);
+        t_sys = input_db->getDoubleWithDefault("t_sys", t_sys);    // time to begin systole (s);
         m1_LA = input_db->getDoubleWithDefault("m1_LA", m1_LA);
         m2_LA = input_db->getDoubleWithDefault("m2_LA", m2_LA);
         m1_LV = input_db->getDoubleWithDefault("m1_LV", m1_LV);
@@ -285,7 +282,7 @@ CirculationModel::advanceTimeDependentData(const double dt,
                     {
                         const double rsrc = d_rsrc[side];
                         const Point& posn = d_posn[side];
-                        Vector n;
+                        IBTK::Vector n;
                         for (int d = 0; d < NDIM; ++d)
                         {
                             n[d] = axis == d ? (is_lower ? -1.0 : +1.0) : 0.0;
@@ -327,8 +324,8 @@ CirculationModel::advanceTimeDependentData(const double dt,
             }
         }
     }
-    // Convert from 2D to 3D flow rates. Conversion factor is chosen to give the
-    // rectangle a similar area as that of the disk.
+    // Convert from 2D to 3D flow rates. Conversion factor is chosen to give the rectangle a similar area as that of the
+    // disk.
     d_qsrc[0] *= d_vol_conversion_fac;
     d_qsrc[1] *= d_vol_conversion_fac;
     SAMRAI_MPI::sumReduction(&d_qsrc[0], d_nsrc);
@@ -367,8 +364,7 @@ CirculationModel::advanceTimeDependentData(const double dt,
     plog.unsetf(ios_base::showpos);
     plog.unsetf(ios_base::scientific);
 
-    plog << "===================================================================="
-            "========\n"
+    plog << "============================================================================\n"
          << "Circulation model variables at time " << d_time << ":\n";
 
     plog << "Valve is ";
@@ -429,8 +425,7 @@ CirculationModel::advanceTimeDependentData(const double dt,
     plog << "flow units: liter/min    ";
     plog << "pressure units: mmHg\n";
 
-    plog << "===================================================================="
-            "========\n";
+    plog << "============================================================================\n";
 
     plog.unsetf(ios_base::showpos);
     plog.unsetf(ios_base::scientific);
@@ -487,29 +482,29 @@ CirculationModel::writeDataFile() const
         ofstream fout(DATA_FILE_NAME.c_str(), ios::app);
         fout.unsetf(ios_base::showpos);
         fout.setf(ios_base::scientific);
-        fout.precision(5);
+        fout.precision(12);
         fout << d_time;
         fout.setf(ios_base::scientific);
         fout.setf(ios_base::showpos);
-        fout.precision(5);
+        fout.precision(12);
         fout << "," << d_psrc[0] / prconv;
         fout << "," << d_psrc[1] / prconv;
         fout.setf(ios_base::scientific);
         fout.setf(ios_base::showpos);
-        fout.precision(5);
+        fout.precision(12);
         fout << "," << -d_qsrc[0] / flconv;
         fout << "," << d_qsrc[1] / flconv;
         fout.setf(ios_base::scientific);
         fout.setf(ios_base::showpos);
-        fout.precision(5);
+        fout.precision(12);
         fout << "," << d_P_LA;
         fout.setf(ios_base::scientific);
         fout.setf(ios_base::showpos);
-        fout.precision(5);
+        fout.precision(12);
         fout << "," << d_P_LV;
         fout.setf(ios_base::scientific);
         fout.setf(ios_base::showpos);
-        fout.precision(5);
+        fout.precision(12);
         fout << "," << d_P_Wk;
         fout << "\n";
     }
