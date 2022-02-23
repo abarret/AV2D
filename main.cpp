@@ -10,6 +10,7 @@
 #include <ibamr/INSStaggeredHierarchyIntegrator.h>
 
 #include <ibtk/AppInitializer.h>
+#include <ibtk/HierarchyAveragedDataManager.h>
 #include <ibtk/IBTKInit.h>
 #include <ibtk/IBTK_CHKERRQ.h>
 #include <ibtk/IBTK_MPI.h>
@@ -1123,6 +1124,14 @@ main(int argc, char* argv[])
         }
 #endif
 
+        HierarchyAveragedDataManager<SideVariable<NDIM, double>> avg_manager(
+            "AveragedDataManager", app_initializer->getComponentDatabase("AveragedDataManager"), patch_hierarchy);
+        const std::set<double>& time_pts = avg_manager.getSnapshotTimePts();
+        auto snapshot_time_it = time_pts.begin();
+        int num_periods = 0;
+        double period_length = input_db->getDouble("PERIOD");
+        double t_start = input_db->getDouble("T_START");
+
         // Deallocate initialization objects.
         app_initializer.setNull();
         // Print the input database contents to the log file.
@@ -1145,6 +1154,7 @@ main(int argc, char* argv[])
         // Main time step loop.
         pout << "Entering main time step loop...\n";
         const double loop_time_end = time_integrator->getEndTime();
+        double dt = 0.0;
         while (!MathUtilities<double>::equalEps(loop_time, loop_time_end) && time_integrator->stepsRemaining())
         {
             if (dump_viz_data &&
@@ -1186,7 +1196,45 @@ main(int argc, char* argv[])
             pout << "At beginning of timestep # " << iteration_num << endl;
             pout << "Simulation time is " << loop_time << endl;
 
-            double dt = find_dt(cb_finder, leaflet_stress_params);
+            double snap_time = *snapshot_time_it;
+            double mapped_time = 0.0;
+            // We need to be careful about the first
+            if (loop_time > t_start)
+            {
+                mapped_time = std::fmod(loop_time, period_length) + t_start;
+            }
+            else
+            {
+                mapped_time = -1.0;
+            }
+            pout << "Mapping time: " << mapped_time << "\n";
+            pout << "Snap time:    " << snap_time << "\n";
+            if (mapped_time >= snap_time && mapped_time - dt <= snap_time)
+            {
+                Pointer<hier::Variable<NDIM>> u_var = navier_stokes_integrator->getVelocityVariable();
+                auto var_db = VariableDatabase<NDIM>::getDatabase();
+                const int u_idx =
+                    var_db->mapVariableAndContextToIndex(u_var, navier_stokes_integrator->getCurrentContext());
+                HierarchyMathOps hier_math_ops("HierarchyMathOps", patch_hierarchy);
+                hier_math_ops.resetLevels(0, patch_hierarchy->getFinestLevelNumber());
+                hier_math_ops.setPatchHierarchy(patch_hierarchy);
+                const int wgt_sc_idx = hier_math_ops.getSideWeightPatchDescriptorIndex();
+                bool at_steady_state = avg_manager.updateTimeAveragedSnapshot(
+                    u_idx, snap_time, patch_hierarchy, "CONSERVATIVE_LINEAR_REFINE", wgt_sc_idx, dt);
+                pout << "Snapshot at time " << snap_time;
+                if (at_steady_state)
+                    pout << " is at steady state\n";
+                else
+                    pout << " is not at steady state\n";
+                std::advance(snapshot_time_it, 1);
+                if (snapshot_time_it == time_pts.end())
+                {
+                    num_periods++;
+                    snapshot_time_it = time_pts.begin();
+                }
+            }
+
+            dt = find_dt(cb_finder, leaflet_stress_params);
             dt = std::min(time_integrator->getMaximumTimeStepSize(), dt);
 
             Pointer<hier::Variable<NDIM>> U_var = navier_stokes_integrator->getVelocityVariable();

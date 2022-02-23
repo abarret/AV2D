@@ -53,6 +53,10 @@ VIZ_DUMP_TIME_INTERVAL = 0.006
 BDRY_ID_FOR_RCN = 2
 SF_INIT = 0.0
 DT_CONST = 0.0120352
+BETA = 1.0
+
+PERIOD = 0.8512 // Length of cycle
+T_START = 0.03 // Time to start systole
 
 // solver parameters
 USE_IB_DELTA_FUNCTIONS     = TRUE                   // whether to use smoothed delta functions to mediate Lagrangian-Eulerian interaction
@@ -92,6 +96,13 @@ KAPPA_P_BODY  =  KAPPA_S_BODY
 KAPPA_S_SURFACE = 0.5*1.843750*0.5*2828.1250000*1.0e6
 BETA_S = 0.5*32.500*0.5*7187.50000*1.0e3 //0.5*32.500*0.5*7187.50000*1.0e4
 BUTTRESS_KAPPA = 1.0e7
+
+AveragedDataManager {
+    t_start = T_START
+    t_end = T_START + PERIOD
+    threshold = 1.0e-5
+    num_snapshots = 75
+}
 
 QInit {
   num = 1.0
@@ -154,7 +165,7 @@ LeafletParams {
    C10            = 1.5*5.0*3018.0*1.0e2
    C01            = 3.2495
    C10_min        = 1.5*5.0*3018.0*1.0e2
-   C10_max        = 1.5*5.0*3018.0*1.0e2*100.0
+   C10_max        = 1.5*5.0*3018.0*1.0e2*BETA
    K1             = 1965103.0
    K2             = 0.001
    a_disp         = 0.0
@@ -166,9 +177,9 @@ LeafletParams {
 BcCoefs {
    R_LVOT = 0.0150      // LVOT resistance (mmHg ml^-1 s)
    R_MV = 0.0050        // mitral valve resistance (mmHg ml^-1 s)
-   T_per = 0.8512       // period length (time) for cardiac cycle (s);
+   T_per = PERIOD //0.8512       // period length (time) for cardiac cycle (s);
    Q_vein = 6.2         // pulmonary veinous flow rate into LA (L/min);
-   t_sys = 0.03//0.2          // time to begin systole (s)
+   t_sys = T_START //0.03//0.2          // time to begin systole (s)
    m1_LA = 1.32
    m2_LA = 13.1
    m1_LV = 2.4039
