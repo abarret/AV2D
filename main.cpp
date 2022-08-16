@@ -10,6 +10,7 @@
 #include <ibamr/INSStaggeredHierarchyIntegrator.h>
 
 #include <ibtk/AppInitializer.h>
+#include <ibtk/HierarchyAveragedDataManager.h>
 #include <ibtk/IBTKInit.h>
 #include <ibtk/IBTK_CHKERRQ.h>
 #include <ibtk/IBTK_MPI.h>
@@ -646,10 +647,6 @@ main(int argc, char* argv[])
         using MeshTools::Modification::rotate;
         using MeshTools::Modification::translate;
 
-        // Check that the bounding box agrees with the prescribed extents.
-        MeshTools::BoundingBox bbox = MeshTools::bounding_box(housing_mesh);
-        pout << "mesh bounding box = " << bbox.min() << " " << bbox.max() << "\n";
-
         // Setup data for imposing constraints.
         Pointer<Database> housing_params_db = app_initializer->getComponentDatabase("HousingParams");
         PenaltyStressParams housing_stress_params;
@@ -946,6 +943,7 @@ main(int argc, char* argv[])
                                                         parts,
                                                         app_initializer->getRestartReadDirectory(),
                                                         app_initializer->getRestartRestoreNumber());
+        vol_bdry_mesh_mapping->initializeEquationSystems();
         Pointer<CutCellVolumeMeshMapping> cut_cell_mapping =
             new CutCellVolumeMeshMapping("CutCellMeshMapping",
                                          app_initializer->getComponentDatabase("CutCellMapping"),
@@ -961,8 +959,11 @@ main(int argc, char* argv[])
         adv_diff_integrator->registerLevelSetVolFunction(ls_var, ls_fcn);
         adv_diff_integrator->registerGeneralBoundaryMeshMapping(vol_bdry_mesh_mapping);
 
+        Pointer<RBFReconstructCacheOS> reconstruct_cache_from_centroids = new RBFReconstructCacheOS(1);
+        Pointer<RBFReconstructCacheOS> reconstruct_cache_to_centroids = new RBFReconstructCacheOS(1);
         Pointer<RBFReconstructCacheOS> reconstruct_cache = new RBFReconstructCacheOS(1);
-        adv_diff_integrator->registerReconstructionCache(reconstruct_cache);
+        adv_diff_integrator->registerReconstructionCacheToCentroids(reconstruct_cache_to_centroids, ls_var);
+        adv_diff_integrator->registerReconstructionCacheFromCentroids(reconstruct_cache_from_centroids, ls_var);
 
         EquationSystems* leaflet_bdry_eq = cut_cell_mapping->getMeshPartitioner(LEAFLET_PART)->getEquationSystems();
         EquationSystems* housing_bdry_eq = cut_cell_mapping->getMeshPartitioner(HOUSING_PART)->getEquationSystems();
@@ -1061,11 +1062,24 @@ main(int argc, char* argv[])
         if (housing_bdry_io) housing_bdry_io->append(from_restart);
         if (reaction_bdry_io) reaction_bdry_io->append(from_restart);
 
+        Pointer<Database> avg_manager_db = app_initializer->getComponentDatabase("AvgManager");
+        HierarchyAveragedDataManager avg_manager("AvgManager",
+                                                 navier_stokes_integrator->getVelocityVariable(),
+                                                 avg_manager_db,
+                                                 patch_hierarchy,
+                                                 grid_geometry,
+                                                 false);
+        const std::set<double>& time_pts = avg_manager.getSnapshotTimePts();
+        const double t_start = avg_manager_db->getDouble("t_start");
+        const double avg_freq = avg_manager_db->getDouble("avg_freq");
+        double next_save_time = t_start;
+        bool quit_on_steady = avg_manager_db->getBool("quit_on_steady_state");
+
         // Initialize FE data.
         pout << "\nInitializing FE data...\n";
         ibfe_method_ops->initializeFEData();
         if (ib_post_processor) ib_post_processor->initializeFEData();
-        vol_bdry_mesh_mapping->initializeEquationSystems();
+        vol_bdry_mesh_mapping->initializeFEData();
         if (!from_restart) sb_coupling_manager->fillInitialConditions();
 
         // Setup CBFinder. Note that this must be done here so that the FEDataManager is already set up.
@@ -1177,6 +1191,25 @@ main(int argc, char* argv[])
                 }
                 next_viz_dump_time += viz_dump_time_interval;
                 viz_dump_iteration_num += 1;
+            }
+
+            // Determine if we need to update the average
+            if (loop_time > next_save_time)
+            {
+                auto var_db = VariableDatabase<NDIM>::getDatabase();
+                const int u_idx = var_db->mapVariableAndContextToIndex(navier_stokes_integrator->getVelocityVariable(),
+                                                                       navier_stokes_integrator->getCurrentContext());
+                HierarchyMathOps hier_math_ops("HierarchyMathOps", patch_hierarchy);
+                hier_math_ops.resetLevels(0, patch_hierarchy->getFinestLevelNumber());
+                const int wgt_sc_idx = hier_math_ops.getSideWeightPatchDescriptorIndex();
+                bool at_steady_state = avg_manager.updateTimeAveragedSnapshot(
+                    u_idx, next_save_time, patch_hierarchy, "CONSERVATIVE_LINEAR_REFINE", wgt_sc_idx, 1.0e-8);
+                if (at_steady_state)
+                    pout << "Currently at steady state!\n";
+                else
+                    pout << "Not yet at steady state!\n";
+                next_save_time += avg_freq;
+                if (quit_on_steady && at_steady_state) break;
             }
 
             iteration_num = time_integrator->getIntegratorStep();

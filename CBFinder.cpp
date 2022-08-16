@@ -2,6 +2,7 @@
 
 #include "CBFinder.h"
 
+#include "libmesh/boundary_info.h"
 #include "libmesh/enum_preconditioner_type.h"
 #include "libmesh/enum_solver_type.h"
 #include "libmesh/fe_interface.h"
