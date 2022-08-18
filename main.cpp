@@ -17,6 +17,7 @@
 #include <ibtk/IndexUtilities.h>
 #include <ibtk/libmesh_utilities.h>
 #include <ibtk/muParserRobinBcCoefs.h>
+#include <ibtk/snapshot_utilities.h>
 
 #include <ADS/CutCellVolumeMeshMapping.h>
 #include <ADS/LSCutCellLaplaceOperator.h>
@@ -566,6 +567,8 @@ find_dt(const std::shared_ptr<CBFinder>& cb_finder, const LeafletStressParams& l
 }
 } // namespace
 
+void compute_variance(const int u_idx, const int ubar_idx, const int uvar_idx, Pointer<PatchHierarchy<NDIM>> hierarchy);
+
 int
 main(int argc, char* argv[])
 {
@@ -696,9 +699,13 @@ main(int argc, char* argv[])
                                               app_initializer->getComponentDatabase("IBHierarchyIntegrator"),
                                               ib_ops_set,
                                               navier_stokes_integrator);
-        Pointer<SBAdvDiffIntegrator> adv_diff_integrator = new SBAdvDiffIntegrator(
-            "AdvDiffIntegrator", app_initializer->getComponentDatabase("AdvDiffIntegrator"), time_integrator, true);
-        navier_stokes_integrator->registerAdvDiffHierarchyIntegrator(adv_diff_integrator);
+        //        Pointer<SBAdvDiffIntegrator> adv_diff_integrator = new SBAdvDiffIntegrator(
+        //            "AdvDiffIntegrator", app_initializer->getComponentDatabase("AdvDiffIntegrator"), time_integrator,
+        //            true);
+        Pointer<LSAdvDiffIntegrator> adv_diff_integrator = new LSAdvDiffIntegrator(
+            "AdvDiffIntegrator", app_initializer->getComponentDatabase("AdvDiffIntegrator"), true);
+        //        navier_stokes_integrator->registerAdvDiffHierarchyIntegrator(adv_diff_integrator);
+        adv_diff_integrator->registerAdvectionVelocity(navier_stokes_integrator->getAdvectionVelocityVariable());
         Pointer<CartesianGridGeometry<NDIM>> grid_geometry = new CartesianGridGeometry<NDIM>(
             "CartesianGeometry", app_initializer->getComponentDatabase("CartesianGeometry"));
         Pointer<PatchHierarchy<NDIM>> patch_hierarchy = new PatchHierarchy<NDIM>("PatchHierarchy", grid_geometry);
@@ -957,7 +964,7 @@ main(int argc, char* argv[])
         ls_fcn->registerNormalReverseDomainId({ 5, 6, 9, 12, 11 });
         ls_fcn->registerNormalReverseElemId({ 632, 633, 634 });
         adv_diff_integrator->registerLevelSetVolFunction(ls_var, ls_fcn);
-        adv_diff_integrator->registerGeneralBoundaryMeshMapping(vol_bdry_mesh_mapping);
+        //        adv_diff_integrator->registerGeneralBoundaryMeshMapping(vol_bdry_mesh_mapping);
 
         Pointer<RBFReconstructCacheOS> reconstruct_cache_from_centroids = new RBFReconstructCacheOS(1);
         Pointer<RBFReconstructCacheOS> reconstruct_cache_to_centroids = new RBFReconstructCacheOS(1);
@@ -1007,8 +1014,8 @@ main(int argc, char* argv[])
         Pointer<SBBoundaryConditions> bdry_conds = new SBBoundaryConditions(
             "SBBoundaryConditions", sb_coupling_manager->getFLName(Q_var), sb_coupling_manager, cut_cell_rcn_mapping);
         bdry_conds->setFluidContext(adv_diff_integrator->getCurrentContext());
-        adv_diff_integrator->registerSBIntegrator(sb_integrator, ls_var);
-        adv_diff_integrator->registerLevelSetSBDataManager(ls_var, sb_coupling_manager);
+        //        adv_diff_integrator->registerSBIntegrator(sb_integrator, ls_var);
+        //        adv_diff_integrator->registerLevelSetSBDataManager(ls_var, sb_coupling_manager);
         k_on = input_db->getDouble("K_ON");
         k_off = input_db->getDouble("K_OFF");
         sf_max = input_db->getDouble("SF_MAX");
@@ -1061,19 +1068,6 @@ main(int argc, char* argv[])
         if (leaflet_bdry_io) leaflet_bdry_io->append(from_restart);
         if (housing_bdry_io) housing_bdry_io->append(from_restart);
         if (reaction_bdry_io) reaction_bdry_io->append(from_restart);
-
-        Pointer<Database> avg_manager_db = app_initializer->getComponentDatabase("AvgManager");
-        HierarchyAveragedDataManager avg_manager("AvgManager",
-                                                 navier_stokes_integrator->getVelocityVariable(),
-                                                 avg_manager_db,
-                                                 patch_hierarchy,
-                                                 grid_geometry,
-                                                 false);
-        const std::set<double>& time_pts = avg_manager.getSnapshotTimePts();
-        const double t_start = avg_manager_db->getDouble("t_start");
-        const double avg_freq = avg_manager_db->getDouble("avg_freq");
-        double next_save_time = t_start;
-        bool quit_on_steady = avg_manager_db->getBool("quit_on_steady_state");
 
         // Initialize FE data.
         pout << "\nInitializing FE data...\n";
@@ -1137,6 +1131,29 @@ main(int argc, char* argv[])
         }
 #endif
 
+        Pointer<Database> avg_manager_u_db = app_initializer->getComponentDatabase("AvgManagerU");
+        HierarchyAveragedDataManager u_avg_manager("UAvgManager",
+                                                   navier_stokes_integrator->getVelocityVariable(),
+                                                   avg_manager_u_db,
+                                                   patch_hierarchy,
+                                                   grid_geometry,
+                                                   false);
+        Pointer<Database> avg_manager_tke_db = app_initializer->getComponentDatabase("AvgManagerTKE");
+        HierarchyAveragedDataManager tke_avg_manager("TKEAvgManager",
+                                                     navier_stokes_integrator->getVelocityVariable(),
+                                                     avg_manager_tke_db,
+                                                     patch_hierarchy,
+                                                     grid_geometry,
+                                                     false);
+        const std::set<double>& time_pts = u_avg_manager.getSnapshotTimePts();
+        const double t_start = avg_manager_u_db->getDouble("t_start");
+        const double avg_freq = avg_manager_u_db->getDouble("avg_freq");
+        double next_save_time = t_start;
+        bool finding_tke = false;
+        auto var_db = VariableDatabase<NDIM>::getDatabase();
+        const int ubar_idx = var_db->registerVariableAndContext(
+            navier_stokes_integrator->getVelocityVariable(), var_db->getContext("TKE"), 1);
+
         // Deallocate initialization objects.
         app_initializer.setNull();
         // Print the input database contents to the log file.
@@ -1194,7 +1211,7 @@ main(int argc, char* argv[])
             }
 
             // Determine if we need to update the average
-            if (loop_time > next_save_time)
+            if (loop_time > next_save_time && !finding_tke)
             {
                 auto var_db = VariableDatabase<NDIM>::getDatabase();
                 const int u_idx = var_db->mapVariableAndContextToIndex(navier_stokes_integrator->getVelocityVariable(),
@@ -1202,14 +1219,45 @@ main(int argc, char* argv[])
                 HierarchyMathOps hier_math_ops("HierarchyMathOps", patch_hierarchy);
                 hier_math_ops.resetLevels(0, patch_hierarchy->getFinestLevelNumber());
                 const int wgt_sc_idx = hier_math_ops.getSideWeightPatchDescriptorIndex();
-                bool at_steady_state = avg_manager.updateTimeAveragedSnapshot(
+                bool at_steady_state = u_avg_manager.updateTimeAveragedSnapshot(
                     u_idx, next_save_time, patch_hierarchy, "CONSERVATIVE_LINEAR_REFINE", wgt_sc_idx, 1.0e-8);
                 if (at_steady_state)
-                    pout << "Currently at steady state!\n";
+                    pout << "Mean U at steady state!\n";
                 else
-                    pout << "Not yet at steady state!\n";
+                    pout << "Mean U not at steady state!\n";
                 next_save_time += avg_freq;
-                if (quit_on_steady && at_steady_state) break;
+                if (at_steady_state) finding_tke = true;
+            }
+            else if (loop_time > next_save_time && finding_tke)
+            {
+                // Time to find TKE
+                auto var_db = VariableDatabase<NDIM>::getDatabase();
+                const int u_idx = var_db->mapVariableAndContextToIndex(navier_stokes_integrator->getVelocityVariable(),
+                                                                       navier_stokes_integrator->getCurrentContext());
+                HierarchyMathOps hier_math_ops("HierarchyMathOps", patch_hierarchy);
+                hier_math_ops.resetLevels(0, patch_hierarchy->getFinestLevelNumber());
+                const int wgt_sc_idx = hier_math_ops.getSideWeightPatchDescriptorIndex();
+                navier_stokes_integrator->allocatePatchData(
+                    ubar_idx, loop_time, 0, patch_hierarchy->getFinestLevelNumber());
+                // Get the average velocity field
+                fill_snapshot_on_hierarchy(*u_avg_manager.getSnapshotCache(),
+                                           ubar_idx,
+                                           t_start,
+                                           patch_hierarchy,
+                                           "CONSERVATIVE_LINEAR_REFINE",
+                                           1.0e-8);
+                // Now compute variance
+                compute_variance(u_idx, ubar_idx, ubar_idx, patch_hierarchy);
+                // Now store variance
+                bool at_steady_state = tke_avg_manager.updateTimeAveragedSnapshot(
+                    ubar_idx, next_save_time, patch_hierarchy, "CONSERVATIVE_LINEAR_REFINE", wgt_sc_idx, 1.0e-8);
+                if (at_steady_state)
+                    pout << "TKE at steady state!\n";
+                else
+                    pout << "TKE not at steady state!\n";
+                next_save_time += avg_freq;
+                navier_stokes_integrator->deallocatePatchData(ubar_idx, 0, patch_hierarchy->getFinestLevelNumber());
+                if (at_steady_state) break;
             }
 
             iteration_num = time_integrator->getIntegratorStep();
@@ -1282,3 +1330,29 @@ main(int argc, char* argv[])
 
     return 0;
 } // main
+
+void
+compute_tke(const int u_idx, const int ubar_idx, const int uvar_idx, Pointer<PatchHierarchy<NDIM>> hierarchy)
+{
+    for (int ln = 0; ln <= hierarchy->getFinestLevelNumber(); ++ln)
+    {
+        Pointer<PatchLevel<NDIM>> level = hierarchy->getPatchLevel(ln);
+        for (PatchLevel<NDIM>::Iterator p(level); p; p++)
+        {
+            Pointer<Patch<NDIM>> patch = level->getPatch(p());
+            Pointer<SideData<NDIM, double>> u_data = patch->getPatchData(u_idx);
+            Pointer<SideData<NDIM, double>> ubar_data = patch->getPatchData(ubar_idx);
+            Pointer<CellData<NDIM, double>> uvar_data = patch->getPatchData(uvar_idx);
+            for (int axis = 0; axis < NDIM; ++axis)
+            {
+                for (SideIterator<NDIM> si(patch->getBox(), axis); si; si++)
+                {
+                    const SideIndex<NDIM>& idx = si();
+                    const double u = (*u_data)(idx);
+                    const double ubar = (*ubar_data)(idx);
+                    (*uvar_data)(idx) = (u - ubar) * (u - ubar);
+                }
+            }
+        }
+    }
+}

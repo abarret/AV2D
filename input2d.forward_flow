@@ -68,7 +68,7 @@ DT_MAX                      = 1.0e-5        // time step size (s)
 DT_MIN                      = 1.0e-9
 ERROR_ON_DT_CHANGE          = FALSE              // whether to emit an error message if the time step size changes
 START_TIME                  = 0.0e0             // initial simulation time (s)
-END_TIME                    = 12.0 * 0.8512            // final   simulation time (s)
+END_TIME                    = 6.0            // final   simulation time (s)
 GROW_DT                     = 2.0e0             // growth factor for timesteps
 NUM_CYCLES                  = 1                 // number of cycles of fixed-point iteration
 CONVECTIVE_TS_TYPE          = "ADAMS_BASHFORTH" // convective time stepping type
@@ -93,10 +93,10 @@ KAPPA_S_SURFACE = 0.5*1.843750*0.5*2828.1250000*1.0e6
 BETA_S = 0.5*32.500*0.5*7187.50000*1.0e3 //0.5*32.500*0.5*7187.50000*1.0e4
 BUTTRESS_KAPPA = 1.0e7
 
-AvgManager {
-  t_start = 0.8
-  t_end = 0.8
-  threshold = 1.0
+AvgManagerU {
+  t_start = 0.5
+  t_end = 0.5
+  threshold = 0.9
   num_snapshots = 1
   avg_freq = 0.001
   quit_on_steady_state = TRUE
@@ -105,8 +105,20 @@ AvgManager {
   dir_dump_name = "avg_viz"
 }
 
+AvgManagerTKE {
+  t_start = 0.5
+  t_end = 0.5
+  threshold = 10.0
+  num_snapshots = 1
+  avg_freq = 0.001
+  quit_on_steady_state = TRUE
+  enable_logging = TRUE
+  output_data = TRUE
+  dir_dump_name = "tke_viz"
+}
+
 QInit {
-  num = 1.0
+  num = 0.0
   use_constant = TRUE
 }
 
@@ -151,7 +163,7 @@ Q_bcs {
 
     gcoef_function_0 = "0.0"
     gcoef_function_1 = "0.0"
-    gcoef_function_2 = "1.0"
+    gcoef_function_2 = "0.0"
     gcoef_function_3 = "0.0"
 }
 
@@ -166,7 +178,7 @@ LeafletParams {
    C10            = 1.5*5.0*3018.0*1.0e2
    C01            = 3.2495
    C10_min        = 1.5*5.0*3018.0*1.0e2
-   C10_max        = 1.5*5.0*3018.0*1.0e2*100.0
+   C10_max        = 1.5*5.0*3018.0*1.0e2
    K1             = 1965103.0
    K2             = 0.001
    a_disp         = 0.0
