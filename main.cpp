@@ -1240,7 +1240,7 @@ main(int argc, char* argv[])
                 navier_stokes_integrator->allocatePatchData(
                     ubar_idx, loop_time, 0, patch_hierarchy->getFinestLevelNumber());
                 // Get the average velocity field
-                fill_snapshot_on_hierarchy(*u_avg_manager.getSnapshotCache(),
+                fill_snapshot_on_hierarchy(u_avg_manager.getSnapshotCache(),
                                            ubar_idx,
                                            t_start,
                                            patch_hierarchy,
@@ -1332,7 +1332,7 @@ main(int argc, char* argv[])
 } // main
 
 void
-compute_tke(const int u_idx, const int ubar_idx, const int uvar_idx, Pointer<PatchHierarchy<NDIM>> hierarchy)
+compute_variance(const int u_idx, const int ubar_idx, const int uvar_idx, Pointer<PatchHierarchy<NDIM>> hierarchy)
 {
     for (int ln = 0; ln <= hierarchy->getFinestLevelNumber(); ++ln)
     {
@@ -1342,7 +1342,7 @@ compute_tke(const int u_idx, const int ubar_idx, const int uvar_idx, Pointer<Pat
             Pointer<Patch<NDIM>> patch = level->getPatch(p());
             Pointer<SideData<NDIM, double>> u_data = patch->getPatchData(u_idx);
             Pointer<SideData<NDIM, double>> ubar_data = patch->getPatchData(ubar_idx);
-            Pointer<CellData<NDIM, double>> uvar_data = patch->getPatchData(uvar_idx);
+            Pointer<SideData<NDIM, double>> uvar_data = patch->getPatchData(uvar_idx);
             for (int axis = 0; axis < NDIM; ++axis)
             {
                 for (SideIterator<NDIM> si(patch->getBox(), axis); si; si++)

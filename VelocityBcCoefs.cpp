@@ -75,7 +75,7 @@ VelocityBcCoefs::setBcCoefs(Pointer<ArrayData<NDIM, double>>& acoef_data,
         }
         else if (d_comp_idx == axis)
         {
-            const double psrc = (side == 0 ? 140965.0 : 135140.0); // d_circ_model->d_psrc[side];
+            const double psrc = (side == 0 ? 146321.0 : 141322.0); // d_circ_model->d_psrc[side];
             const double rsrc = d_circ_model->d_rsrc[side];
             const Point& posn = d_circ_model->d_posn[side];
             double X[NDIM];
