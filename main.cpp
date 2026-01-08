@@ -17,7 +17,7 @@
 #include <ibtk/libmesh_utilities.h>
 #include <ibtk/muParserRobinBcCoefs.h>
 
-#include <ADS/CutCellVolumeMeshMapping.h>
+#include <ADS/CutCellMeshMapping.h>
 #include <ADS/LSCutCellLaplaceOperator.h>
 #include <ADS/LSFromMesh.h>
 #include <ADS/SBAdvDiffIntegrator.h>
@@ -647,7 +647,7 @@ main(int argc, char* argv[])
         using MeshTools::Modification::translate;
 
         // Check that the bounding box agrees with the prescribed extents.
-        MeshTools::BoundingBox bbox = MeshTools::bounding_box(housing_mesh);
+        libMesh::BoundingBox bbox = MeshTools::create_bounding_box(housing_mesh);
         pout << "mesh bounding box = " << bbox.min() << " " << bbox.max() << "\n";
 
         // Setup data for imposing constraints.
@@ -946,27 +946,26 @@ main(int argc, char* argv[])
                                                         parts,
                                                         app_initializer->getRestartReadDirectory(),
                                                         app_initializer->getRestartRestoreNumber());
-        Pointer<CutCellVolumeMeshMapping> cut_cell_mapping =
-            new CutCellVolumeMeshMapping("CutCellMeshMapping",
-                                         app_initializer->getComponentDatabase("CutCellMapping"),
-                                         vol_bdry_mesh_mapping->getMeshPartitioners({ 0, 1 }));
-        Pointer<CutCellVolumeMeshMapping> cut_cell_rcn_mapping =
-            new CutCellVolumeMeshMapping("CutCellRcnMeshMapping",
-                                         app_initializer->getComponentDatabase("CutCellMapping"),
-                                         vol_bdry_mesh_mapping->getMeshPartitioner(2));
-        Pointer<LSFromMesh> ls_fcn = new LSFromMesh("LSFcn", patch_hierarchy, cut_cell_mapping, false);
+        Pointer<CutCellMeshMapping> cut_cell_mapping =
+            new CutCellMeshMapping("CutCellMeshMapping", app_initializer->getComponentDatabase("CutCellMapping"));
+        Pointer<CutCellMeshMapping> cut_cell_rcn_mapping =
+            new CutCellMeshMapping("CutCellRcnMeshMapping", app_initializer->getComponentDatabase("CutCellMapping"));
+        Pointer<LSFromMesh> ls_fcn = new LSFromMesh(
+            "LSFcn", patch_hierarchy, vol_bdry_mesh_mapping->getSystemManagers({ 0, 1 }), cut_cell_mapping, false);
         ls_fcn->registerBdryFcn(bdry_fcn);
         ls_fcn->registerNormalReverseDomainId({ 5, 6, 9, 12, 11 });
         ls_fcn->registerNormalReverseElemId({ 632, 633, 634 });
         adv_diff_integrator->registerLevelSetVolFunction(ls_var, ls_fcn);
         adv_diff_integrator->registerGeneralBoundaryMeshMapping(vol_bdry_mesh_mapping);
+        Pointer<RBFReconstructCacheOS> reconstruct_to_centroid = new RBFReconstructCacheOS(1),
+                                       reconstruct_from_centroid = new RBFReconstructCacheOS(1),
+                                       reconstruct_cache = new RBFReconstructCacheOS(1);
+        adv_diff_integrator->registerReconstructionCacheToCentroids(reconstruct_to_centroid, ls_var);
+        adv_diff_integrator->registerReconstructionCacheFromCentroids(reconstruct_from_centroid, ls_var);
 
-        Pointer<RBFReconstructCacheOS> reconstruct_cache = new RBFReconstructCacheOS(1);
-        adv_diff_integrator->registerReconstructionCache(reconstruct_cache);
-
-        EquationSystems* leaflet_bdry_eq = cut_cell_mapping->getMeshPartitioner(LEAFLET_PART)->getEquationSystems();
-        EquationSystems* housing_bdry_eq = cut_cell_mapping->getMeshPartitioner(HOUSING_PART)->getEquationSystems();
-        EquationSystems* reaction_bdry_eq = vol_bdry_mesh_mapping->getMeshPartitioner(2)->getEquationSystems();
+        EquationSystems* leaflet_bdry_eq = vol_bdry_mesh_mapping->getSystemManager(LEAFLET_PART).getEquationSystems();
+        EquationSystems* housing_bdry_eq = vol_bdry_mesh_mapping->getSystemManager(HOUSING_PART).getEquationSystems();
+        EquationSystems* reaction_bdry_eq = vol_bdry_mesh_mapping->getSystemManager(2).getEquationSystems();
 
         pout << "Setting up transported quantity\n";
         Pointer<CellVariable<NDIM, double>> Q_var = new CellVariable<NDIM, double>("Q");
@@ -991,7 +990,7 @@ main(int argc, char* argv[])
         auto sb_coupling_manager =
             std::make_shared<SBSurfaceFluidCouplingManager>("CouplingManager",
                                                             app_initializer->getComponentDatabase("CouplingManager"),
-                                                            vol_bdry_mesh_mapping->getMeshPartitioner(2));
+                                                            &vol_bdry_mesh_mapping->getSystemManager(2));
         sb_coupling_manager->registerReconstructCache(reconstruct_cache);
         sb_coupling_manager->registerFluidConcentration(Q_var);
         std::string sf_name = "SurfaceConcentration";
@@ -1003,9 +1002,6 @@ main(int argc, char* argv[])
         sb_coupling_manager->registerInitialConditions(sf_name, sf_init);
         sb_coupling_manager->initializeFEData();
         Pointer<SBIntegrator> sb_integrator = new SBIntegrator("SBIntegrator", sb_coupling_manager);
-        Pointer<SBBoundaryConditions> bdry_conds = new SBBoundaryConditions(
-            "SBBoundaryConditions", sb_coupling_manager->getFLName(Q_var), sb_coupling_manager, cut_cell_rcn_mapping);
-        bdry_conds->setFluidContext(adv_diff_integrator->getCurrentContext());
         adv_diff_integrator->registerSBIntegrator(sb_integrator, ls_var);
         adv_diff_integrator->registerLevelSetSBDataManager(ls_var, sb_coupling_manager);
         k_on = input_db->getDouble("K_ON");
@@ -1018,6 +1014,20 @@ main(int argc, char* argv[])
         time_to_start = input_db->getDouble("TIME_TO_START_RCNS");
 
         // Set up diffusion operators
+        std::vector<std::unique_ptr<FEToHierarchyMapping>> rcn_hierarchy_mapping;
+        rcn_hierarchy_mapping.emplace_back(std::make_unique<FEToHierarchyMapping>(
+            "RcnFEHierarchyMapping",
+            &vol_bdry_mesh_mapping->getSystemManager(3),
+            input_db->getDatabase("RcnFEHierarchyMapping"),
+            app_initializer->getComponentDatabase("GriddingAlgorithm")->getInteger("max_levels"),
+            1));
+        Pointer<SBBoundaryConditions> bdry_conds =
+            new SBBoundaryConditions("SBBoundaryConditions",
+                                     sb_coupling_manager->getFLName(Q_var),
+                                     sb_coupling_manager,
+                                     cut_cell_rcn_mapping,
+                                     unique_ptr_vec_to_raw_ptr_vec(rcn_hierarchy_mapping));
+        bdry_conds->setFluidContext(adv_diff_integrator->getCurrentContext());
         Pointer<LSCutCellLaplaceOperator> rhs_oper = new LSCutCellLaplaceOperator(
             "LSCutCellRHSOperator", app_initializer->getComponentDatabase("LSCutCellOperator"), false);
         Pointer<LSCutCellLaplaceOperator> sol_oper = new LSCutCellLaplaceOperator(
