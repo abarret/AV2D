@@ -946,6 +946,30 @@ main(int argc, char* argv[])
                                                         parts,
                                                         app_initializer->getRestartReadDirectory(),
                                                         app_initializer->getRestartRestoreNumber());
+
+        // Create Eulerian boundary condition specification objects.
+        CirculationModel circ_model("circ_model", input_db->getDatabase("BcCoefs"));
+        vector<RobinBcCoefStrategy<NDIM>*> u_bc_coefs(NDIM);
+        for (int d = 0; d < NDIM; ++d) u_bc_coefs[d] = new VelocityBcCoefs(&circ_model, d);
+        navier_stokes_integrator->registerPhysicalBoundaryConditions(u_bc_coefs);
+        Pointer<FeedbackForcer> feedback_forcer =
+            new FeedbackForcer(&circ_model, navier_stokes_integrator, patch_hierarchy);
+        time_integrator->registerBodyForceFunction(feedback_forcer);
+
+        pout << "Registering visit writers...\n";
+        Pointer<VisItDataWriter<NDIM>> visit_data_writer = app_initializer->getVisItDataWriter();
+        if (uses_visit)
+        {
+            time_integrator->registerVisItDataWriter(visit_data_writer);
+            adv_diff_integrator->registerVisItDataWriter(visit_data_writer);
+        }
+
+        // Initialize FE data.
+        pout << "\nInitializing FE data...\n";
+        ibfe_method_ops->initializeFEData();
+        if (ib_post_processor) ib_post_processor->initializeFEData();
+        vol_bdry_mesh_mapping->initializeEquationSystems();
+
         Pointer<CutCellMeshMapping> cut_cell_mapping =
             new CutCellMeshMapping("CutCellMeshMapping", app_initializer->getComponentDatabase("CutCellMapping"));
         Pointer<CutCellMeshMapping> cut_cell_rcn_mapping =
@@ -986,24 +1010,16 @@ main(int argc, char* argv[])
             std::make_shared<RBFOneSidedReconstructions>("OneSided", Reconstruct::RBFPolyOrder::QUADRATIC, 7);
         adv_diff_integrator->registerAdvectionReconstruction(Q_var, convective_reconstruct);
 
-        // Setup reactions
+        // Setup surface reactions
         auto sb_coupling_manager =
             std::make_shared<SBSurfaceFluidCouplingManager>("CouplingManager",
                                                             app_initializer->getComponentDatabase("CouplingManager"),
                                                             &vol_bdry_mesh_mapping->getSystemManager(2));
-        sb_coupling_manager->registerReconstructCache(reconstruct_cache);
-        sb_coupling_manager->registerFluidConcentration(Q_var);
         std::string sf_name = "SurfaceConcentration";
         sb_coupling_manager->registerSurfaceConcentration(sf_name);
         sb_coupling_manager->registerSurfaceReactionFunction(sf_name, sf_ode);
-        sb_coupling_manager->registerFluidBoundaryCondition(Q_var, a_fcn, g_fcn);
-        sb_coupling_manager->registerFluidSurfaceDependence(sf_name, Q_var);
         sf_init_val = input_db->getDouble("SF_INIT");
         sb_coupling_manager->registerInitialConditions(sf_name, sf_init);
-        sb_coupling_manager->initializeFEData();
-        Pointer<SBIntegrator> sb_integrator = new SBIntegrator("SBIntegrator", sb_coupling_manager);
-        adv_diff_integrator->registerSBIntegrator(sb_integrator, ls_var);
-        adv_diff_integrator->registerLevelSetSBDataManager(ls_var, sb_coupling_manager);
         k_on = input_db->getDouble("K_ON");
         k_off = input_db->getDouble("K_OFF");
         sf_max = input_db->getDouble("SF_MAX");
@@ -1012,13 +1028,23 @@ main(int argc, char* argv[])
         use_feedback = input_db->getBool("USE_FEEDBACK");
         stiff_right = input_db->getBool("STIFF_RIGHT");
         time_to_start = input_db->getDouble("TIME_TO_START_RCNS");
+        sb_coupling_manager->registerFluidConcentration(Q_var);
+        sb_coupling_manager->registerFluidBoundaryCondition(Q_var, a_fcn, g_fcn);
+        sb_coupling_manager->registerFluidSurfaceDependence(sf_name, Q_var);
+        sb_coupling_manager->registerReconstructCache(reconstruct_cache);
+        Pointer<SBIntegrator> sb_integrator = new SBIntegrator("SBIntegrator", sb_coupling_manager);
+        adv_diff_integrator->registerSBIntegrator(sb_integrator, ls_var);
+        adv_diff_integrator->registerLevelSetSBDataManager(ls_var, sb_coupling_manager);
+        sb_coupling_manager->initializeFEData();
+        vol_bdry_mesh_mapping->initializeFEData(); // Initialize Vol Bdry Mapping after all FEData is registered.
+        if (!from_restart) sb_coupling_manager->fillInitialConditions();
 
         // Set up diffusion operators
         std::vector<std::unique_ptr<FEToHierarchyMapping>> rcn_hierarchy_mapping;
         rcn_hierarchy_mapping.emplace_back(std::make_unique<FEToHierarchyMapping>(
             "RcnFEHierarchyMapping",
-            &vol_bdry_mesh_mapping->getSystemManager(3),
-            input_db->getDatabase("RcnFEHierarchyMapping"),
+            &vol_bdry_mesh_mapping->getSystemManager(2),
+            app_initializer->getComponentDatabase("VolBdryMeshMap"),
             app_initializer->getComponentDatabase("GriddingAlgorithm")->getInteger("max_levels"),
             1));
         Pointer<SBBoundaryConditions> bdry_conds =
@@ -1039,44 +1065,6 @@ main(int argc, char* argv[])
         Q_helmholtz_solver->setOperator(sol_oper);
         adv_diff_integrator->setHelmholtzSolver(Q_var, Q_helmholtz_solver);
         adv_diff_integrator->setHelmholtzRHSOperator(Q_var, rhs_oper);
-
-        // Create Eulerian boundary condition specification objects.
-        CirculationModel circ_model("circ_model", input_db->getDatabase("BcCoefs"));
-        vector<RobinBcCoefStrategy<NDIM>*> u_bc_coefs(NDIM);
-        for (int d = 0; d < NDIM; ++d) u_bc_coefs[d] = new VelocityBcCoefs(&circ_model, d);
-        navier_stokes_integrator->registerPhysicalBoundaryConditions(u_bc_coefs);
-        Pointer<FeedbackForcer> feedback_forcer =
-            new FeedbackForcer(&circ_model, navier_stokes_integrator, patch_hierarchy);
-        time_integrator->registerBodyForceFunction(feedback_forcer);
-
-        pout << "Registering visit writers...\n";
-        Pointer<VisItDataWriter<NDIM>> visit_data_writer = app_initializer->getVisItDataWriter();
-        if (uses_visit)
-        {
-            time_integrator->registerVisItDataWriter(visit_data_writer);
-            adv_diff_integrator->registerVisItDataWriter(visit_data_writer);
-        }
-        std::unique_ptr<ExodusII_IO> leaflet_io(uses_exodus ? new ExodusII_IO(leaflet_mesh) : nullptr);
-        std::unique_ptr<ExodusII_IO> housing_io(uses_exodus ? new ExodusII_IO(housing_mesh) : nullptr);
-        std::unique_ptr<ExodusII_IO> leaflet_bdry_io(uses_exodus ? new ExodusII_IO(leaflet_bdry_eq->get_mesh()) :
-                                                                   nullptr);
-        std::unique_ptr<ExodusII_IO> housing_bdry_io(uses_exodus ? new ExodusII_IO(housing_bdry_eq->get_mesh()) :
-                                                                   nullptr);
-        std::unique_ptr<ExodusII_IO> reaction_bdry_io(uses_exodus ? new ExodusII_IO(reaction_bdry_eq->get_mesh()) :
-                                                                    nullptr);
-
-        if (leaflet_io) leaflet_io->append(from_restart);
-        if (housing_io) housing_io->append(from_restart);
-        if (leaflet_bdry_io) leaflet_bdry_io->append(from_restart);
-        if (housing_bdry_io) housing_bdry_io->append(from_restart);
-        if (reaction_bdry_io) reaction_bdry_io->append(from_restart);
-
-        // Initialize FE data.
-        pout << "\nInitializing FE data...\n";
-        ibfe_method_ops->initializeFEData();
-        if (ib_post_processor) ib_post_processor->initializeFEData();
-        vol_bdry_mesh_mapping->initializeEquationSystems();
-        if (!from_restart) sb_coupling_manager->fillInitialConditions();
 
         // Setup CBFinder. Note that this must be done here so that the FEDataManager is already set up.
         cb_finder = std::make_shared<CBFinder>(
@@ -1138,6 +1126,20 @@ main(int argc, char* argv[])
         // Print the input database contents to the log file.
         plog << "Input database:\n";
         input_db->printClassData(plog);
+
+        std::unique_ptr<ExodusII_IO> leaflet_io(uses_exodus ? new ExodusII_IO(leaflet_mesh) : nullptr);
+        std::unique_ptr<ExodusII_IO> housing_io(uses_exodus ? new ExodusII_IO(housing_mesh) : nullptr);
+        std::unique_ptr<ExodusII_IO> leaflet_bdry_io(uses_exodus ? new ExodusII_IO(leaflet_bdry_eq->get_mesh()) :
+                                                                   nullptr);
+        std::unique_ptr<ExodusII_IO> housing_bdry_io(uses_exodus ? new ExodusII_IO(housing_bdry_eq->get_mesh()) :
+                                                                   nullptr);
+        std::unique_ptr<ExodusII_IO> reaction_bdry_io(uses_exodus ? new ExodusII_IO(reaction_bdry_eq->get_mesh()) :
+                                                                    nullptr);
+        if (leaflet_io) leaflet_io->append(from_restart);
+        if (housing_io) housing_io->append(from_restart);
+        if (leaflet_bdry_io) leaflet_bdry_io->append(from_restart);
+        if (housing_bdry_io) housing_bdry_io->append(from_restart);
+        if (reaction_bdry_io) reaction_bdry_io->append(from_restart);
 
         // Write out initial visualization data.
         int iteration_num = time_integrator->getIntegratorStep();
@@ -1211,6 +1213,8 @@ main(int argc, char* argv[])
             circ_model.advanceTimeDependentData(
                 dt, patch_hierarchy, U_current_idx, P_current_idx, wgt_cc_idx, wgt_sc_idx);
 
+            rcn_hierarchy_mapping[0]->setPatchHierarchy(patch_hierarchy);
+            rcn_hierarchy_mapping[0]->reinitElementMappings();
             time_integrator->advanceHierarchy(dt);
 
             pout << endl;
