@@ -2,6 +2,7 @@
 
 #include "CBFinder.h"
 
+#include "libmesh/boundary_info.h"
 #include "libmesh/enum_preconditioner_type.h"
 #include "libmesh/enum_solver_type.h"
 #include "libmesh/fe_interface.h"
@@ -121,7 +122,7 @@ CBFinder::formHarmonicInterpolant()
     d_tot_CB = 0;
     EquationSystems* vol_eq_sys = d_fe_data_manager->getEquationSystems();
     const MeshBase& vol_mesh = vol_eq_sys->get_mesh();
-    EquationSystems* bdry_eq_sys = d_sb_data_manager->getFEMeshPartitioner()->getEquationSystems();
+    EquationSystems* bdry_eq_sys = d_sb_data_manager->getFESystemManager().getEquationSystems();
 
     System& phi_sys = vol_eq_sys->get_system(d_phi_sys_name);
     DofMap& phi_dof_map = phi_sys.get_dof_map();

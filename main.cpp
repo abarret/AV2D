@@ -17,7 +17,7 @@
 #include <ibtk/libmesh_utilities.h>
 #include <ibtk/muParserRobinBcCoefs.h>
 
-#include <ADS/CutCellVolumeMeshMapping.h>
+#include <ADS/CutCellMeshMapping.h>
 #include <ADS/LSCutCellLaplaceOperator.h>
 #include <ADS/LSFromMesh.h>
 #include <ADS/SBAdvDiffIntegrator.h>
@@ -647,7 +647,7 @@ main(int argc, char* argv[])
         using MeshTools::Modification::translate;
 
         // Check that the bounding box agrees with the prescribed extents.
-        MeshTools::BoundingBox bbox = MeshTools::bounding_box(housing_mesh);
+        libMesh::BoundingBox bbox = MeshTools::create_bounding_box(housing_mesh);
         pout << "mesh bounding box = " << bbox.min() << " " << bbox.max() << "\n";
 
         // Setup data for imposing constraints.
@@ -946,27 +946,50 @@ main(int argc, char* argv[])
                                                         parts,
                                                         app_initializer->getRestartReadDirectory(),
                                                         app_initializer->getRestartRestoreNumber());
-        Pointer<CutCellVolumeMeshMapping> cut_cell_mapping =
-            new CutCellVolumeMeshMapping("CutCellMeshMapping",
-                                         app_initializer->getComponentDatabase("CutCellMapping"),
-                                         vol_bdry_mesh_mapping->getMeshPartitioners({ 0, 1 }));
-        Pointer<CutCellVolumeMeshMapping> cut_cell_rcn_mapping =
-            new CutCellVolumeMeshMapping("CutCellRcnMeshMapping",
-                                         app_initializer->getComponentDatabase("CutCellMapping"),
-                                         vol_bdry_mesh_mapping->getMeshPartitioner(2));
-        Pointer<LSFromMesh> ls_fcn = new LSFromMesh("LSFcn", patch_hierarchy, cut_cell_mapping, false);
+
+        // Create Eulerian boundary condition specification objects.
+        CirculationModel circ_model("circ_model", input_db->getDatabase("BcCoefs"));
+        vector<RobinBcCoefStrategy<NDIM>*> u_bc_coefs(NDIM);
+        for (int d = 0; d < NDIM; ++d) u_bc_coefs[d] = new VelocityBcCoefs(&circ_model, d);
+        navier_stokes_integrator->registerPhysicalBoundaryConditions(u_bc_coefs);
+        Pointer<FeedbackForcer> feedback_forcer =
+            new FeedbackForcer(&circ_model, navier_stokes_integrator, patch_hierarchy);
+        time_integrator->registerBodyForceFunction(feedback_forcer);
+
+        pout << "Registering visit writers...\n";
+        Pointer<VisItDataWriter<NDIM>> visit_data_writer = app_initializer->getVisItDataWriter();
+        if (uses_visit)
+        {
+            time_integrator->registerVisItDataWriter(visit_data_writer);
+            adv_diff_integrator->registerVisItDataWriter(visit_data_writer);
+        }
+
+        // Initialize FE data.
+        pout << "\nInitializing FE data...\n";
+        ibfe_method_ops->initializeFEData();
+        if (ib_post_processor) ib_post_processor->initializeFEData();
+        vol_bdry_mesh_mapping->initializeEquationSystems();
+
+        Pointer<CutCellMeshMapping> cut_cell_mapping =
+            new CutCellMeshMapping("CutCellMeshMapping", app_initializer->getComponentDatabase("CutCellMapping"));
+        Pointer<CutCellMeshMapping> cut_cell_rcn_mapping =
+            new CutCellMeshMapping("CutCellRcnMeshMapping", app_initializer->getComponentDatabase("CutCellMapping"));
+        Pointer<LSFromMesh> ls_fcn = new LSFromMesh(
+            "LSFcn", patch_hierarchy, vol_bdry_mesh_mapping->getSystemManagers({ 0, 1 }), cut_cell_mapping, false);
         ls_fcn->registerBdryFcn(bdry_fcn);
         ls_fcn->registerNormalReverseDomainId({ 5, 6, 9, 12, 11 });
         ls_fcn->registerNormalReverseElemId({ 632, 633, 634 });
         adv_diff_integrator->registerLevelSetVolFunction(ls_var, ls_fcn);
         adv_diff_integrator->registerGeneralBoundaryMeshMapping(vol_bdry_mesh_mapping);
+        Pointer<RBFReconstructCacheOS> reconstruct_to_centroid = new RBFReconstructCacheOS(1),
+                                       reconstruct_from_centroid = new RBFReconstructCacheOS(1),
+                                       reconstruct_cache = new RBFReconstructCacheOS(1);
+        adv_diff_integrator->registerReconstructionCacheToCentroids(reconstruct_to_centroid, ls_var);
+        adv_diff_integrator->registerReconstructionCacheFromCentroids(reconstruct_from_centroid, ls_var);
 
-        Pointer<RBFReconstructCacheOS> reconstruct_cache = new RBFReconstructCacheOS(1);
-        adv_diff_integrator->registerReconstructionCache(reconstruct_cache);
-
-        EquationSystems* leaflet_bdry_eq = cut_cell_mapping->getMeshPartitioner(LEAFLET_PART)->getEquationSystems();
-        EquationSystems* housing_bdry_eq = cut_cell_mapping->getMeshPartitioner(HOUSING_PART)->getEquationSystems();
-        EquationSystems* reaction_bdry_eq = vol_bdry_mesh_mapping->getMeshPartitioner(2)->getEquationSystems();
+        EquationSystems* leaflet_bdry_eq = vol_bdry_mesh_mapping->getSystemManager(LEAFLET_PART).getEquationSystems();
+        EquationSystems* housing_bdry_eq = vol_bdry_mesh_mapping->getSystemManager(HOUSING_PART).getEquationSystems();
+        EquationSystems* reaction_bdry_eq = vol_bdry_mesh_mapping->getSystemManager(2).getEquationSystems();
 
         pout << "Setting up transported quantity\n";
         Pointer<CellVariable<NDIM, double>> Q_var = new CellVariable<NDIM, double>("Q");
@@ -987,27 +1010,16 @@ main(int argc, char* argv[])
             std::make_shared<RBFOneSidedReconstructions>("OneSided", Reconstruct::RBFPolyOrder::QUADRATIC, 7);
         adv_diff_integrator->registerAdvectionReconstruction(Q_var, convective_reconstruct);
 
-        // Setup reactions
+        // Setup surface reactions
         auto sb_coupling_manager =
             std::make_shared<SBSurfaceFluidCouplingManager>("CouplingManager",
                                                             app_initializer->getComponentDatabase("CouplingManager"),
-                                                            vol_bdry_mesh_mapping->getMeshPartitioner(2));
-        sb_coupling_manager->registerReconstructCache(reconstruct_cache);
-        sb_coupling_manager->registerFluidConcentration(Q_var);
+                                                            &vol_bdry_mesh_mapping->getSystemManager(2));
         std::string sf_name = "SurfaceConcentration";
         sb_coupling_manager->registerSurfaceConcentration(sf_name);
         sb_coupling_manager->registerSurfaceReactionFunction(sf_name, sf_ode);
-        sb_coupling_manager->registerFluidBoundaryCondition(Q_var, a_fcn, g_fcn);
-        sb_coupling_manager->registerFluidSurfaceDependence(sf_name, Q_var);
         sf_init_val = input_db->getDouble("SF_INIT");
         sb_coupling_manager->registerInitialConditions(sf_name, sf_init);
-        sb_coupling_manager->initializeFEData();
-        Pointer<SBIntegrator> sb_integrator = new SBIntegrator("SBIntegrator", sb_coupling_manager);
-        Pointer<SBBoundaryConditions> bdry_conds = new SBBoundaryConditions(
-            "SBBoundaryConditions", sb_coupling_manager->getFLName(Q_var), sb_coupling_manager, cut_cell_rcn_mapping);
-        bdry_conds->setFluidContext(adv_diff_integrator->getCurrentContext());
-        adv_diff_integrator->registerSBIntegrator(sb_integrator, ls_var);
-        adv_diff_integrator->registerLevelSetSBDataManager(ls_var, sb_coupling_manager);
         k_on = input_db->getDouble("K_ON");
         k_off = input_db->getDouble("K_OFF");
         sf_max = input_db->getDouble("SF_MAX");
@@ -1016,8 +1028,32 @@ main(int argc, char* argv[])
         use_feedback = input_db->getBool("USE_FEEDBACK");
         stiff_right = input_db->getBool("STIFF_RIGHT");
         time_to_start = input_db->getDouble("TIME_TO_START_RCNS");
+        sb_coupling_manager->registerFluidConcentration(Q_var);
+        sb_coupling_manager->registerFluidBoundaryCondition(Q_var, a_fcn, g_fcn);
+        sb_coupling_manager->registerFluidSurfaceDependence(sf_name, Q_var);
+        sb_coupling_manager->registerReconstructCache(reconstruct_cache);
+        Pointer<SBIntegrator> sb_integrator = new SBIntegrator("SBIntegrator", sb_coupling_manager);
+        adv_diff_integrator->registerSBIntegrator(sb_integrator, ls_var);
+        adv_diff_integrator->registerLevelSetSBDataManager(ls_var, sb_coupling_manager);
+        sb_coupling_manager->initializeFEData();
+        vol_bdry_mesh_mapping->initializeFEData(); // Initialize Vol Bdry Mapping after all FEData is registered.
+        if (!from_restart) sb_coupling_manager->fillInitialConditions();
 
         // Set up diffusion operators
+        std::vector<std::unique_ptr<FEToHierarchyMapping>> rcn_hierarchy_mapping;
+        rcn_hierarchy_mapping.emplace_back(std::make_unique<FEToHierarchyMapping>(
+            "RcnFEHierarchyMapping",
+            &vol_bdry_mesh_mapping->getSystemManager(2),
+            app_initializer->getComponentDatabase("VolBdryMeshMap"),
+            app_initializer->getComponentDatabase("GriddingAlgorithm")->getInteger("max_levels"),
+            1));
+        Pointer<SBBoundaryConditions> bdry_conds =
+            new SBBoundaryConditions("SBBoundaryConditions",
+                                     sb_coupling_manager->getFLName(Q_var),
+                                     sb_coupling_manager,
+                                     cut_cell_rcn_mapping,
+                                     unique_ptr_vec_to_raw_ptr_vec(rcn_hierarchy_mapping));
+        bdry_conds->setFluidContext(adv_diff_integrator->getCurrentContext());
         Pointer<LSCutCellLaplaceOperator> rhs_oper = new LSCutCellLaplaceOperator(
             "LSCutCellRHSOperator", app_initializer->getComponentDatabase("LSCutCellOperator"), false);
         Pointer<LSCutCellLaplaceOperator> sol_oper = new LSCutCellLaplaceOperator(
@@ -1029,44 +1065,6 @@ main(int argc, char* argv[])
         Q_helmholtz_solver->setOperator(sol_oper);
         adv_diff_integrator->setHelmholtzSolver(Q_var, Q_helmholtz_solver);
         adv_diff_integrator->setHelmholtzRHSOperator(Q_var, rhs_oper);
-
-        // Create Eulerian boundary condition specification objects.
-        CirculationModel circ_model("circ_model", input_db->getDatabase("BcCoefs"));
-        vector<RobinBcCoefStrategy<NDIM>*> u_bc_coefs(NDIM);
-        for (int d = 0; d < NDIM; ++d) u_bc_coefs[d] = new VelocityBcCoefs(&circ_model, d);
-        navier_stokes_integrator->registerPhysicalBoundaryConditions(u_bc_coefs);
-        Pointer<FeedbackForcer> feedback_forcer =
-            new FeedbackForcer(&circ_model, navier_stokes_integrator, patch_hierarchy);
-        time_integrator->registerBodyForceFunction(feedback_forcer);
-
-        pout << "Registering visit writers...\n";
-        Pointer<VisItDataWriter<NDIM>> visit_data_writer = app_initializer->getVisItDataWriter();
-        if (uses_visit)
-        {
-            time_integrator->registerVisItDataWriter(visit_data_writer);
-            adv_diff_integrator->registerVisItDataWriter(visit_data_writer);
-        }
-        std::unique_ptr<ExodusII_IO> leaflet_io(uses_exodus ? new ExodusII_IO(leaflet_mesh) : nullptr);
-        std::unique_ptr<ExodusII_IO> housing_io(uses_exodus ? new ExodusII_IO(housing_mesh) : nullptr);
-        std::unique_ptr<ExodusII_IO> leaflet_bdry_io(uses_exodus ? new ExodusII_IO(leaflet_bdry_eq->get_mesh()) :
-                                                                   nullptr);
-        std::unique_ptr<ExodusII_IO> housing_bdry_io(uses_exodus ? new ExodusII_IO(housing_bdry_eq->get_mesh()) :
-                                                                   nullptr);
-        std::unique_ptr<ExodusII_IO> reaction_bdry_io(uses_exodus ? new ExodusII_IO(reaction_bdry_eq->get_mesh()) :
-                                                                    nullptr);
-
-        if (leaflet_io) leaflet_io->append(from_restart);
-        if (housing_io) housing_io->append(from_restart);
-        if (leaflet_bdry_io) leaflet_bdry_io->append(from_restart);
-        if (housing_bdry_io) housing_bdry_io->append(from_restart);
-        if (reaction_bdry_io) reaction_bdry_io->append(from_restart);
-
-        // Initialize FE data.
-        pout << "\nInitializing FE data...\n";
-        ibfe_method_ops->initializeFEData();
-        if (ib_post_processor) ib_post_processor->initializeFEData();
-        vol_bdry_mesh_mapping->initializeEquationSystems();
-        if (!from_restart) sb_coupling_manager->fillInitialConditions();
 
         // Setup CBFinder. Note that this must be done here so that the FEDataManager is already set up.
         cb_finder = std::make_shared<CBFinder>(
@@ -1128,6 +1126,20 @@ main(int argc, char* argv[])
         // Print the input database contents to the log file.
         plog << "Input database:\n";
         input_db->printClassData(plog);
+
+        std::unique_ptr<ExodusII_IO> leaflet_io(uses_exodus ? new ExodusII_IO(leaflet_mesh) : nullptr);
+        std::unique_ptr<ExodusII_IO> housing_io(uses_exodus ? new ExodusII_IO(housing_mesh) : nullptr);
+        std::unique_ptr<ExodusII_IO> leaflet_bdry_io(uses_exodus ? new ExodusII_IO(leaflet_bdry_eq->get_mesh()) :
+                                                                   nullptr);
+        std::unique_ptr<ExodusII_IO> housing_bdry_io(uses_exodus ? new ExodusII_IO(housing_bdry_eq->get_mesh()) :
+                                                                   nullptr);
+        std::unique_ptr<ExodusII_IO> reaction_bdry_io(uses_exodus ? new ExodusII_IO(reaction_bdry_eq->get_mesh()) :
+                                                                    nullptr);
+        if (leaflet_io) leaflet_io->append(from_restart);
+        if (housing_io) housing_io->append(from_restart);
+        if (leaflet_bdry_io) leaflet_bdry_io->append(from_restart);
+        if (housing_bdry_io) housing_bdry_io->append(from_restart);
+        if (reaction_bdry_io) reaction_bdry_io->append(from_restart);
 
         // Write out initial visualization data.
         int iteration_num = time_integrator->getIntegratorStep();
@@ -1201,6 +1213,8 @@ main(int argc, char* argv[])
             circ_model.advanceTimeDependentData(
                 dt, patch_hierarchy, U_current_idx, P_current_idx, wgt_cc_idx, wgt_sc_idx);
 
+            rcn_hierarchy_mapping[0]->setPatchHierarchy(patch_hierarchy);
+            rcn_hierarchy_mapping[0]->reinitElementMappings();
             time_integrator->advanceHierarchy(dt);
 
             pout << endl;

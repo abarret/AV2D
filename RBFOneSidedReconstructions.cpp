@@ -111,7 +111,7 @@ RBFOneSidedReconstructions::applyReconstruction(const int Q_idx, const int N_idx
                     // Check if we can use z-spline
                     if (use_bilinear)
                         (*Q_new_data)(idx) =
-                            Reconstruct::bilinearReconstruction(x_loc, x_ll, idx_ll, *Q_cur_data, temp_dx.data());
+                            Reconstruct::bilinear_reconstruction(x_loc, x_ll, idx_ll, *Q_cur_data, temp_dx.data());
                     else
                         (*Q_new_data)(idx) = oneSidedRBFReconstruct(
                             x_loc, idx, patch, *Q_cur_data, *ls_data, *vol_cur_data, *vol_new_data, *ls_new_data);
